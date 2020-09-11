@@ -51,9 +51,12 @@ FlowJo data export with gata annotation example:
 
 from flowjo.data import CSVGated
 
-parser = CSVGated("export_directory")
-parser = parser.build()
-facs_data = parser.data
+data = CSVGated("export_directory")
+facs_data = data.data
+
+# parsed data can be saved and loaded
+data.save("annotated_data.csv")
+data.load("annotated_data.csv")
 
 ```
 

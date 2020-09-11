@@ -37,6 +37,5 @@ __pycache__/
 .venv/
 .vscode/
 .sitemaps/
-/AZ64_singles
-/GrzmB_export
+.data/
 main.py

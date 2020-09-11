@@ -24,6 +24,12 @@
 """
 Allows for the exporting of FlowJo data to a gate-annotated pd.DataFrame
 
+:class: _Abstract
+Abstract FlowJo Data file, use for further subclassing
+
+:class: CSV
+Data class for basic flowjo fcs export in csv format
+
 :class: CSVData
 Data class for parsing a FlowJo fcs data with sample/gate annotation.
 
@@ -108,24 +114,140 @@ import os
 import itertools
 import warnings
 
-class CSVGated():
+class _Abstract():
+    """
+    Abstract data class provides the interface for a flowjo.data type.
+    For new data types inherit this class
+        :param path: path to the data to import
+    """
+    def __init__(self, path: str=None) -> None:
+        self._path: str = path
+        self.data: pd.DataFrame = None
+
+    @property
+    def path(self) -> str:
+        """
+        Getter for path to data file
+            :returns: path to data file
+        """
+        return self._path
+
+    @path.setter
+    def path(self, path: str) -> None:
+        """
+        Setter for the data file path. Will parse the data.
+            :param path: path to data file
+            :raises ValueError: is file doesnt exist
+        """
+        if not os.path.isfile(path):
+            raise ValueError(f"path '{path}' doesnt point to a valid file")
+
+        self._path = path
+
+        self.parse()
+
+    def parse(self) -> None:
+        """
+        Parses the file in .path into .data
+            :raises NotImplementedError:
+        """
+        raise NotImplementedError("implement in inherited class")
+
+    def save(self, path) -> None:
+        """
+        Saves the data file in csv format (encoded 'utf-8') to path
+            :raises ValueError: if path cannot be used for saving
+        """
+        if self.data is None:
+            raise ValueError(".data attribute doesnt contain any data")
+
+        if os.path.isdir(path):
+            raise ValueError(f"path '{path}' points to a directory. Please use a path to a (non-existing) file")
+
+        if os.path.isfile(path):
+            value = input(f"Path '{path}' already exists.\n Overwrite? Y(es), N(o): ")
+            while True:
+                if value == "Y" or value == "Yes":
+                    break
+                elif value == "N" or value == "No":
+                    return
+                else:
+                    value = input("Unknown input. Overwrite? Y(es), N(o): ")
+        
+        self.data.to_csv(path, sep=",", index=False, encoding="utf-8")
+
+    def load(self, path) -> None:
+        """
+        Loads a previously saved data file from csv format into the class.
+            :param path: path to file to load
+            :raises ValueError: if file cannot be loaded
+        """
+        if not os.path.isfile(path):
+            raise ValueError(f"path '{path}' does not point to a file")
+
+        self._path = path
+
+        self.data = pd.read_csv(path, encoding="utf-8", error_bad_lines=True)
+
+class CSV(_Abstract):
+    """
+    Class representing a basic csv exported FlowJo file
+    """
+    def __init__(self, path: str = None):
+        super().__init__(path)
+        
+        if self.path:
+            self.parse()
+
+    def parse(self) -> None:
+        """
+        Parses the file in .path into .data
+        """
+        self.data = pd.read_csv(self.path, encoding="utf-8", error_bad_lines=True)
+
+class CSVGated(_Abstract):
     """
     Class representing a gate annotated exported FlowJo (csv) files
         :param directory: path to the directory containing the exported FlowJo Files
     """
     def __init__(self, directory: str = None) -> None:
+        super().__init__(None)
         self._directory: str = directory
 
         self._name_setup: str = None
         self._gate_setup: str = None
         self._data_files: List[str] = []
 
-        self.data: pd.DataFrame = None
         self.name_map: pd.Series = None
         self.gate_map: List[pd.DataFrame] = None
 
+        # If directory is given, try to find all source data files
         if directory:
             self._parse_directory()
+        
+        # If all source data has been found, we can parse the data
+        if self.directory is not None and self.name_map is not None and self.gate_map is not None:
+            self.parse()
+
+    @property
+    def path(self) -> str:
+        """
+        This class is special and doesnt have .path. It has a .directory.
+        .path is only available when this class is used with .load()
+            :raises NotImplementedError:
+        """
+        if not self.path:
+            raise NotImplementedError("CSVGated object uses .directory not .path")
+        else:
+            return self.path
+
+    @path.setter
+    def path(self, path: str) -> None:
+        """
+        This class is special and doesnt have .path. It has a .directory.
+            :raises NotImplementedError:
+        """
+        raise NotImplementedError("CSVGated object uses .directory not .path")
 
     @property
     def directory(self) -> str:
@@ -204,15 +326,21 @@ class CSVGated():
             self._gate_setup = old_gate_setup
             raise error
 
-    def build(self) -> None:
+    def parse(self) -> None:
+        """
+        Parses the directory data into .data
+            :raises ValueError: if parsing/collapsing/annotating failes at any point
+        """
         data = self._load_data()
         data = self._collapse_data(data)
 
-        if "group" not in pd.concat(self.gate_map).columns
+        if "group" not in pd.concat(self.gate_map).columns:
             data = self._annotate_single_gates(data)
         else:
             data = self._collapse_gates(data)
             data = self._annotate_group_gates(data)
+
+        data.index = list(range(0, len(data.index)))
 
         self.data = data
 
