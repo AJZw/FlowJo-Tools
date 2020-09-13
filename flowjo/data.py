@@ -26,6 +26,7 @@ Allows for the exporting of FlowJo data to a gate-annotated pd.DataFrame
 
 :class: _Abstract
 Abstract FlowJo Data file, use for further subclassing
+Implement here functions that do not depends on how-to-parse the data
 
 :class: CSV
 Data class for basic flowjo fcs export in csv format
