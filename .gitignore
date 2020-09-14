@@ -39,3 +39,6 @@ __pycache__/
 .sitemaps/
 .data/
 main.py
+main_overlap.py
+min_rep.py
+lab_meeting.py

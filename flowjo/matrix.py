@@ -1,5 +1,5 @@
 ##############################################################################     ##    ######
-#    A.J. Zwijnenburg                   2020-01-02           v1.0                 #  #      ##
+#    A.J. Zwijnenburg                   2020-09-24           v1.4                 #  #      ##
 #    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
@@ -40,7 +40,7 @@ from typing import Union, Tuple, List
 from copy import deepcopy
 
 import os.path
-from lxml import etree as ElementTree
+from lxml import etree
 
 class Matrix:
     """
@@ -350,7 +350,6 @@ class Matrix:
         # Check order vs row names and the other way around
         raise NotImplementedError
 
-
     def __check_row_input_list(self, data: list, rows: int = 1) -> None:
         """
         Checks an input list for correct typing
@@ -396,13 +395,13 @@ class Matrix:
             :returns: the positive row index
         """
         if index >= self._row_count:
-            raise IndexError("matrix row index out of range")
+            raise IndexError(f"matrix row index '{index}' out of range")
         
         if index < 0:
             index = self._row_count + index
 
             if index < 0:
-                raise IndexError("matrix row index out of range")
+                raise IndexError(f"matrix row index '{index}' out of range")
         
         return index
     
@@ -413,13 +412,13 @@ class Matrix:
             :returns: the positive row index
         """
         if index >= self._col_count:
-            raise IndexError("matrix column index out of range")
+            raise IndexError(f"matrix column index '{index}' out of range")
         
         if index < 0:
             index = self._col_count + index
 
             if index < 0:
-                raise IndexError("matrix column index out of range")
+                raise IndexError(f"matrix column index '{index}' out of range")
         
         return index
     
@@ -723,7 +722,24 @@ class CompensationMatrix:
         return self._matrix.__repr__()
 
     def __str__(self):
-        return self._matrix.__str__()
+        # make a nice output
+        output = ""
+
+        # Calculate proper '\t' padding
+        max_length = 0
+        for name in self._matrix._row_names:
+            if len(name) >= max_length:
+                max_length = len(name)
+        max_length += 1
+
+        for i, name in enumerate(self._matrix._row_names):
+            padding = max_length - len(name)
+            output += f"\n{str(name)}:{' '*padding}"
+
+            for value in self._matrix[i]._matrix:
+                output += f"{(value*100): >6.1f}"
+        
+        return output[1:]
 
     def __add__(self, other: Union[float, int, bool, Matrix]) -> Matrix:
         item = self._matrix + other._matrix
@@ -745,61 +761,148 @@ class CompensationMatrix:
         self.__set_self_interaction()
         return self
 
-class MTX(CompensationMatrix):
+class MTX():
     """
-    Class for opening and manipulation of FlowJo mtx files. Wraps a CompensationMatrix class
+    Class for opening and manipulation of FlowJo mtx files. 
+    Extends a CompensationMatrix class (use .matrix attribute)
     """
-    def __init__(self, path: str) -> None:
-        self.path: str = path
+    def __init__(self, path: str=None) -> None:
+        self._path: str = None
+
+        # the matrix
+        self.matrix: CompensationMatrix = None
 
         # .mtx file properties
-        self.spectral: str = ""
-        self.prefix: str = ""
+        self.id: str = ""
         self.name: str = ""
-        self.editable: str = ""
-        self.color: str = ""
         self.version: str = ""
         self.status: str = ""
-        self.transforms_id: str = ""
+        self.spectral: str = ""
+        self.prefix: str = ""
         self.suffix: str = ""
+        self.editable: str = ""
+        self.color: str = ""
 
         # .mtx parameter properties
         self.parameters: Dict[str, str] = {} 
 
+        if path:
+            self.path = path
+
+    @classmethod
+    def from_mtx(cls, path: str):
+        """
+        Alternative instantation method of the MTX class.
+        As alternative to the from_wsp classmethod
+        """
+        return cls(path)
+
+    @classmethod
+    def from_wsp(cls, element: etree._Element):
+        """
+        Instantiates the matrix class from the xml tree directly extracted from a .wsp file
+            :param element: the transforms:spilloverMatrix element
+        """
+        temp = cls(None)
+        temp._parse_from_wsp(element)
+        return temp
+
+    @property
+    def path(self) -> str:
+        """
+        Getter for path
+        """
+        return self._path
+
+    @path.setter
+    def path(self, path: str) -> str:
+        """
+        Setter for path
+        """
         # Check if file exists
         if not os.path.isfile(self.path):
-            raise ValueError("path is invalid, path doesnt refer to a file")
+            raise ValueError(f"path '{path}' is invalid, path doesnt refer to a file")
 
         # Check the file extension (must be csv)
         _, extension = os.path.splitext(self.path)
         if extension != ".mtx":
-            raise ValueError("path doesnt refer to a mtx file.")
+            raise ValueError(f"path '{path}' doesnt refer to a mtx file.")
+
+        # set file path
+        self._path = path
 
         # Parse file and extract properties and compensation matrix
-        matrix = self._parse()
+        self._parse_from_path()
 
-        super().__init__(matrix.row_count)
-        
-        # Copy compensation matrix into self
-        self._matrix = matrix
-        self._row_names = matrix.row_names
-        self._col_names = matrix.col_names
+    def _parse_from_wsp(self, element: etree._Element) -> None:
+        """
+        Extra the compensation matrix from the xml tree directly extracted from a .wsp file
+            :param element: the transforms:spilloverMatrix element
+        """
+        matrix_data: Matrix = None
 
-    def _parse(self) -> Matrix:
+        if element.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}spilloverMatrix":
+            # Get meta data
+            self.spectral = element.attrib["spectral"]
+            self.prefix = element.attrib["prefix"]
+            self.name = element.attrib["name"]
+            self.editable = element.attrib["editable"]
+            self.color = element.attrib["color"]
+            self.version = element.attrib["version"]
+            self.status = element.attrib["status"]
+            self.id = element.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}id"]
+            self.suffix = element.attrib["suffix"]
+
+            for data in element:
+                # Get parameter data
+                if data.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameters":
+                    for item in data:
+                        self.parameters[item.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]] = item.attrib["userProvidedCompInfix"]
+                
+                # Get matrix data
+                if data.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}spillover":
+                    # If no data ignore
+                    if len(data) == 0:
+                        continue
+                    
+                    # Else fill matrix
+                    matrix = Matrix(nrow=1, ncol=0, default=0.0)
+                    matrix.row_names = [data.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter"]]
+                    
+                    for item in data:
+                        matrix.append_col(item.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter"], [float(item.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}value"])])
+
+                    # Append row to matrix
+                    if not matrix_data:
+                        matrix_data = matrix
+                    else:
+                        matrix_data.append_matrix_row(matrix)
+        else:
+            raise ValueError("element doesnt contain a spillovermatrix")     
+
+        # Totally not hacky upgrade to CompensationMatrix
+        self.matrix = CompensationMatrix(n=matrix_data.row_count)
+        self.matrix._matrix = matrix_data
+
+    def _parse_from_path(self) -> None:
         """
         Parses the mtx file
-            :raises ValueError: if the file is empty
+            :raises ValueError: if the file cannot be parsed
             :returns: the compensation matrix
         """
         with open(self.path, mode='rb') as xml_file:
             xml_string = xml_file.read()
 
         if not xml_string:
-            raise ValueError("path refers to an empty file")
+            raise ValueError(f"path '{self.path}' refers to an empty file")
 
         # namespaces prefixes are non well-formed, so need to parse with recover on
-        parser = ElementTree.XMLParser(recover=True)
-        tree = ElementTree.fromstring(xml_string, parser)
+        try:
+            parser = etree.XMLParser(recover=True)
+        except etree.XMLSyntaxError as error:
+            raise ValueError(f"path '{self.path}' refers to unrecoverable xml file")
+
+        tree = etree.fromstring(xml_string, parser)
 
         matrix_data: Matrix = None
         # parse iteratively, cannot get xpaths to work with non well-formed namespace prefixes...
@@ -813,7 +916,7 @@ class MTX(CompensationMatrix):
                 self.color = parent.attrib["color"]
                 self.version = parent.attrib["version"]
                 self.status = parent.attrib["status"]
-                self.transforms_id = parent.attrib["transforms:id"]
+                self.id = parent.attrib["transforms:id"]
                 self.suffix = parent.attrib["suffix"]
 
                 for data in parent:
@@ -840,24 +943,26 @@ class MTX(CompensationMatrix):
                             matrix_data = matrix
                         else:
                             matrix_data.append_matrix_row(matrix)
-            
-        return matrix_data
+        
+        # Totally not hacky upgrade to CompensationMatrix
+        self.matrix = CompensationMatrix(n=matrix_data.row_count)
+        self.matrix._matrix = matrix_data
 
     def _dump(self) -> str:
         """
         Creates a (very) rough XML dump of this matrix
         """
-        start = f"""<?xml version="1.0" encoding="UTF-8"?>\n  <gating:gatingML>\n    <transforms:spilloverMatrix spectral="{self.spectral}"  prefix="{self.prefix}"  name="{self.name}"  editable="{self.editable}"  color="{self.color}"  version="{self.version}"  status="{self.status}"  transforms:id="{self.transforms_id}"  suffix="{self.suffix}" >\n"""
+        start = f"""<?xml version="1.0" encoding="UTF-8"?>\n  <gating:gatingML>\n    <transforms:spilloverMatrix spectral="{self.spectral}"  prefix="{self.prefix}"  name="{self.name}"  editable="{self.editable}"  color="{self.color}"  version="{self.version}"  status="{self.status}"  transforms:id="{self.id}"  suffix="{self.suffix}" >\n"""
         parameters = f"      <data-type:parameters>\n"
         for key in self.parameters:
             parameters += f"""        <data-type:parameter data-type:name="{key}"  userProvidedCompInfix="{self.parameters[key]}" />\n"""
         parameters += f"      </data-type:parameters>\n"
 
         spillover = ""
-        for i in range(0, self.row_count):
-            key = self.names[i]
+        for i in range(0, self.matrix.row_count):
+            key = self.matrix.names[i]
             spillover += f"""      <transforms:spillover data-type:parameter="{key}"  userProvidedCompInfix="{self.parameters[key]}" >\n"""
-            row = self.row(key)
+            row = self.matrix.row(key)
             for j in range(0, row.col_count):
                 key = row.col_names[j]
                 spillover += f"""        <transforms:coefficient data-type:parameter="{key}"  transforms:value="{row._matrix[j]}" />\n"""
@@ -880,6 +985,9 @@ class MTX(CompensationMatrix):
 
         with open(path, "w", encoding="utf-8") as file:
             file.write(self._dump())
+
+    def __repr__(self) -> str:
+        return self.matrix.__str__()
 
 if __name__ == "__main__":
     # Get list of files .mtx files representing single stain compensation matrixes

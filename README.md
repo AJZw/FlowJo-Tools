@@ -9,9 +9,10 @@ AJ Zwijnenburg
 ## Requirements
 
 Python >= 3.8.1  
-lxml >= 4.5.2 (for matrix module)  
-pandas >= 1.1.1 (for data module)
-plotnine >= 0.7.1 (for plot module)
+pandas >= 1.1.1  
+lxml >= 4.5.2 (for matrix, and _wsp_parser module)  
+plotnine >= 0.7.1 (for plot module)  
+umap-learn >=0.4.6 (for plot module Plotter.add_umap())
 
 ## Installation
 
@@ -19,29 +20,79 @@ Copy the folder 'flowjo' with its contents into the project folder of the projec
 
 ## Usage
 
-Matrix tools example:  
+FlowJo workspace example:
 
 ```python
-from flowjo.matrix import MTX
-import os
+from flowjo.wsp import Workspace
+from flowjo.plot import Plotter
 
-# Get list of files .mtx files representing single stain compensation matrixes
-path = "singles"
-files = os.listdir(path)
+# Load the wsp file
+workspace = Workspace("path/to/workspace.wsp")
 
-# Combine the single stain compensations
-matrix = None
-for single in files:
-    single = MTX(os.path.join(path, single))
+# You can retreive the components of the workspace like this:
+samples = workspace.samples
+groups = workspace.groups
+cytometers = workspace.cytometers
+compensation = workspace.compensation
 
-    if matrix:
-        matrix += single
-    else:
-        matrix = single
+# All the data components have unique identifiers, (example uses the .samples component)
+sample_identifiers = workspace.samples.ids
+# For ease of use each component also has a name allotted to it
+sample_names = workspace.samples.names
+# Both can be used to retreive the data of a specific component
+sample = workspace.samples["sample id/name"]
 
-# Export combined matrix
-matrix.name = "combined"
-matrix.save("combined.mtx")
+# Each sample contains many useful attributes
+sample.id           # sample id
+sample.name         # sample name
+sample.data         # sample data (deepcopy)
+sample.count        # the amount of events in this sample
+sample.cytometer    # the cytometer this data is acquired on
+sample.compensation # this sample's compensation matrix
+sample.transforms   # the data parameter scale transformations
+sample.keywords     # the .fcs keywords
+sample.gates        # the sample gate structure
+
+# The measured data is not stored in the .wsp file and should be added manually
+# Make sure the export format (channel or scale) and compensation state are correct.
+sample.load_data("path/to/exported_compensated_channel_data.csv", format="channel", is_compensated=True)
+
+# The events contained in a (sub)gate can be retreive:
+gate_node = samples.gates["gate_name"]
+gate_node = samples.gates["or/chain/multiple/gates/using/backslashes"]
+
+# Each gate node also contains many useful attributes
+gate_node.id        # the gate's unique identifier
+gate_node.name      # the gate's name
+gate_node.parent    # the parent gate (if applicable)
+gate_node.sample    # the sample this gate belong to
+gate_node.x         # the gate's x dimension
+gate_node.y         # the gate's y dimension
+gate_node.data      # returns the data of all cells included in the gate (deepcopy)
+gate_node.count     # returns the amount of cells included in this gate
+gate_node.gates     # the subgate structure
+gate_node.polygon   # returns a polygon representation of the gate (handy for plotting)
+
+# Each group contains the following data:
+group = workspace.groups["all samples"]
+group.id            # the group unique identifier (identical to .name)
+group.name          # the group name
+group.ids           # A list of the identifiers of all samples contained in this group
+group.names         # A list of the names of all samples contained in this group
+group.gates         # The group gate structure, this doesnt have to be identical to the sample gate structure!
+group["sample id/name"] # Retreive a specific sample contained in the group
+
+# Each cytometer contains the following data:
+cyto = workspace.cytometers["cytometer id/name"]
+cyto.id             # the unique id of the cytometer (identical to .name)
+cyto.name           # the name of the cytometer
+cyto.compensation   # all compensation matrixes defined in the fcs-files for this cytometer ('Acquisition-defined')
+cyto.transforms     # the cytometer's DEFAULT transformations
+
+# The sample data can be plotted with correct scales as follows:
+plot = Plotter(sample.data)
+plot.scale.update(sample.transforms)
+plot.scatter("X", "Y", "Color")
 ```
 
 FlowJo data export with gata annotation example:
@@ -55,7 +106,7 @@ from flowjo.data import CSVGated
 data = CSVGated("export_directory")
 facs_data = data.data
 
-# parsed data can be saved and loaded
+# Parsed data can be saved and loaded
 data.save("annotated_data.csv")
 data.load("annotated_data.csv")
 ```
@@ -64,10 +115,10 @@ FlowJo like plotting of the data:
 
 ```python
 from flowjo.data import CSV
-from flowjo.plot import Plot, LinearScale, BiexScale
+from flowjo.plot import Plotter, LinearScale, BiexScale
 
 # First load the data into the plotter
-plotter = Plot(CSV("annotated_data.csv"))
+plotter = Plotter(CSV("annotated_data.csv"))
 
 # Make sure to set the proper scale for each parameter
 plotter.scale["FSC-A"] = LinearScale(begin=0, end=262144)
@@ -81,15 +132,44 @@ plot = plotter.raster(x="CX3CR1", y="FSC-A", c="CCR7", c_stat="density")
 # Finally lets show the graph to the world
 print(plot)
 
-# Or directly save the plot (plot names are autogenerated)
+# Or directly save the plot (filename is autogenerated)
 plotter.save_jpg(path="export", x="CX3CR1", y="FSC-A", c="CCR7")
+```
+
+Matrix tools example:  
+
+```python
+from flowjo.matrix import MTX
+import os
+
+# Get list of files .mtx files representing single stain compensation matrixes
+path = "singles"
+files = os.listdir(path)
+
+# Construct the 'combined' matrix
+combined = MTX(os.path.join(path, files[0]))
+combined.name = "combined"
+
+# Add the remaining single stain matrixes
+for single in files[1:]:
+    combined.matrix += single.matrix
+
+# Export combined matrix
+combined.save("combined.mtx")
 ```
 
 ## Version Info
 
 v1.0 - Implemented the compensation matrix tools and flowjo data annotated gate export protocol  
 v1.1 - Implemented the basic plotting functionalities  
-v1.2 - Implemented scatter_3d and convenience saving functions
+v1.2 - Implemented scatter_3d and convenience saving functions  
+v1.3 - Implemented show_3d  
+v1.4 - Implemented FlowJo wsp parser
+
+## ToDo
+
+Allow for creating of groups  
+Have a specific export towards flowjo.plot
 
 ## License
 

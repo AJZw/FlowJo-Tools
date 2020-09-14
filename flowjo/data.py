@@ -122,8 +122,11 @@ class _Abstract():
         :param path: path to the data to import
     """
     def __init__(self, path: str=None) -> None:
-        self._path: str = path
+        self._path: str = None
         self.data: pd.DataFrame = None
+
+        if path:
+            self.path = path
 
     @property
     def path(self) -> str:

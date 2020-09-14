@@ -1,5 +1,5 @@
 ##############################################################################     ##    ######
-#    A.J. Zwijnenburg                   2020-09-11           v1.0                 #  #      ##
+#    A.J. Zwijnenburg                   2020-09-24           v1.4                 #  #      ##
 #    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
@@ -39,19 +39,7 @@ Condensor function for Plot._bin(). Returns the max value for numeric data or th
 :class: _condensor_min
 Condensor function for Plot._bin(). Returns the min value for numeric data or the mode for categorical data
 
-:class: _AbstractScale
-Abstract class providing channel-scaled outputs for major/minor ticks and labels (according to FlowJo)
-
-:class: LinearScale
-The linear scale class
-
-:class: LogScale
-The Logarithmic (log10) scale class
-
-:class: BiexScale
-The biexponential scale class
-
-:class: Plot
+:class: Plotter
 The main plotting class. Provides an interface for the convenient plotting of scatter and rasterized plots.
 Rasterization is slow as proper statistics can be calculated per bin
 
@@ -60,14 +48,15 @@ Rasterization is slow as proper statistics can be calculated per bin
 from __future__ import annotations
 
 from .data import _Abstract
+from .transform import Linear, Biex, Log
 from PIL import Image
 import pandas as pd
 import numpy as np
 import plotnine as p9
 import matplotlib.pyplot as plt
+import matplotlib
 import os
 import io
-import bisect
 import copy
 
 p9.options.figure_size=(12.8, 9.6)
@@ -138,436 +127,23 @@ def _condensor_min(column: pd.Series) -> Any:
             output = output.iloc[0]
     return output
 
-class _AbstractScale():
+def _condensor_blank(column: pd.Series) -> Any:
     """
-    Abstract representation of a scale. This class returns the tick-marks / tick-labels
-    on a x-range of 0-1023 for the scale on the original data range.
-    In orther words. This class calculates the tick-marks as would be plotted in FlowJo.
+    Example condensor function for the _bin function. Must accept a row pd.Series and return a single value
+    Returns the first entree of the series, no manipulation is done.
+        :param column: the input data, will be a column, because of 'apply(axis="index")'
+        :returns: first entree of the series
     """
-    _major_ticks: List[int] = []
-    _labels: List[str] = []
-    _minor_ticks: List[int] = []
+    return column.iloc[0]
 
-    def __init__(self):
-        self.start: int = None
-        self.end: int = None
-
-    def _scaler(self, data: List[int], start: int, end: int) -> List[float]:
-        """
-        The scaling function
-            :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
-        """
-        raise NotImplementedError("implement in child class")
-
-    def labels(self, start: int=0, end: int=1023) -> Tuple[List[float], List[str]]:
-        """
-        Returns the label ticks location and tick label in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
-        """
-        return self._labels
- 
-    def major_ticks(self, start: int=0, end: int=1023) -> List[float]:
-        """
-        Returns the major tick location in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
-        """
-        ticks = copy.deepcopy(self._major_ticks)
-
-        ticks = self._scaler(ticks, start, end)
-
-        return ticks
-    
-    def minor_ticks(self, start: int=0, end: int=1023) -> List[float]:
-        """
-        Returns the minor tick location in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
-        """
-        ticks = copy.deepcopy(self._minor_ticks)
-
-        ticks = self._scaler(ticks, start, end)
-
-        return ticks
-
-class LinearScale(_AbstractScale):
-    """
-    Represents a linear scale between the start and end value
-        :param start: start value
-        :param end: end value (if None, end-value is determined based on data and has to be manually added!)
-    """
-    _major_ticks = [
-        0,
-        50_000,
-        100_000,
-        150_000,
-        200_000,
-        250_000
-    ]
-    _labels = [
-        "0",
-        "50K",
-        "100K",
-        "150K",
-        "200K",
-        "250K"
-    ]
-    _minor_ticks = [
-        10_000, 20_000, 30_000, 40_000,
-        60_000, 70_000, 80_000, 90_000,
-        110_000, 120_000, 130_000, 140_000,
-        160_000, 170_000, 180_000, 190_000,
-        210_000, 220_000, 230_000, 240_000,
-        260_000
-    ]
-
-    def __init__(self, start: int=0, end: int=262144):
-        super().__init__()
-        self.start: int = start
-        self.end: int = end
-
-    def _scaler(self, data: List[int], start: int, end: int) -> List[float]:
-        """
-        The scaling function
-            :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
-        """
-        # Get scaling parameters
-        scale_range = self.end - self.start
-        step_size = (end - start) / scale_range
-
-        # scale
-        for i in range(0, len(data)):
-            data[i] = ((data[i] - self.start) * step_size) + start
-
-        return data
-
-class LogScale(_AbstractScale):
-    """
-    Represents a logarithmic scale between the start and end value
-        :param start: start value
-        :param end: end value
-    """
-    _major_ticks = [
-        5, 10,
-        50, 100,
-        500, 1_000,
-        5_000, 10_000,
-        50_000, 100_000
-    ]
-    _labels = [
-        "", "10¹",
-        "", "10²",
-        "", "10³",
-        "", "10⁴",
-        "", "10⁵"
-    ]
-    _minor_ticks = [
-        2, 3, 4, 6, 7, 8, 9,
-        20, 30, 40, 60, 70, 80, 90,
-        200, 300, 400, 600, 700, 800, 900,
-        2_000, 3_000, 4_000, 6_000, 7_000, 8_000, 9_000,
-        20_000, 30_000, 40_000, 60_000, 70_000, 80_000, 90_000,
-        200_000
-    ]
-
-    def __init__(self, start: int=3, end: int=262144):
-        super().__init__()
-        self.start: int = start
-        self.end: int = end
-
-        if self.start <= 0:
-            raise ValueError("logarithmic scale have to start with a value >0")
-
-    def _scaler(self, data: List[int], start: int, end: int) -> List[float]:
-        """
-        The scaling function
-            :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
-        """
-        # Get scaling parameters
-        scale_range = np.log10(self.end) - np.log10(self.start)
-        step_size = (end - start) / scale_range
-
-        # scale
-        for i in range(0, len(data)):
-            data[i] = ((np.log10(data[i]) - np.log10(self.start)) * step_size) + start
-
-        return data
-
-class BiexScale(_AbstractScale):
-    """
-    Represents a biexponential scale between the start and end value.
-    Different from the others this scale generates a look-up table. This is faster for big matrix transforms. 
-    But a bit waistfull for small number of iterations. Ow well.
-        :param start: start value
-        :param end: end value
-    """
-    _major_ticks = [
-        -100_000, -50_000,
-        -10_000, -5_000,
-        -1_000, -500,
-        -100, -50,
-        -10, -5,
-        0,
-        5, 10,
-        50, 100,
-        500, 1_000,
-        5_000, 10_000,
-        50_000, 100_000
-    ]
-    _labels = [
-        "-10⁵", "",
-        "-10⁴", "",
-        "-10³", "",
-        "-10²", "",
-        "-10¹", "",
-        "0",
-        "", "10¹",
-        "", "10²",
-        "", "10³",
-        "", "10⁴",
-        "", "10⁵"
-    ]
-    _minor_ticks = [
-        -200_000,
-        -90_000, -80_000, -70_000, -60_000, -40_000, -30_000, -20_000,
-        -9_000, -8_000, -7_000, -6_000, -4_000, -3_000, -2_000,
-        -900, -800, -700, -600, -400, -300, -200,
-        -90, -80, -70, -60, -40, -30, -20,
-        -9, -8, -7, -6, -4, -3, -2, -1,
-        1, 2, 3, 4, 6, 7, 8, 9,
-        20, 30, 40, 60, 70, 80, 90,
-        200, 300, 400, 600, 700, 800, 900,
-        2_000, 3_000, 4_000, 6_000, 7_000, 8_000, 9_000,
-        20_000, 30_000, 40_000, 60_000, 70_000, 80_000, 90_000,
-        200_000
-    ]
-
-    def __init__(self, end: int=262144, neg_decade: float=0, width: float=-100, pos_decade: float=4.42):
-        super().__init__()
-        self.neg_decade: float = neg_decade
-        self.width: float = width
-        self.pos_decade: float = pos_decade
-        self.end: int = end
-
-        self.values: List[int] = None
-        self.lookup: List[float] = None
-
-    def _scaler(self, data: List[int], start: int, end: int) -> List[float]:
-        """
-        The scaling function
-            :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
-        """
-        if self.lookup is None:
-            self._build_lookup(start, end)
-
-        for i in range(0, len(data)):
-            index = bisect.bisect_right(self.lookup, data[i])
-
-            if not index:
-                value = None
-            else:
-                value = self.values[index]
-
-            data[i] = value
-
-        return data
-
-    def labels(self, start: int=0, end: int=1023) -> Tuple[List[float], List[str]]:
-        """
-        Returns the label ticks location and tick label in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
-        """
-        labels = copy.deepcopy(self._labels)
-
-        labels_x = copy.deepcopy(self._major_ticks)
-        labels_x = self._scaler(labels_x, start, end)
-
-        # remove too-close-to-zero labels
-        zero = labels_x[10]
-        for i in range(11, len(labels)):
-            if (labels_x[i] - zero) < ((end - start) * 0.05):
-                labels[i] = ""
-                labels[len(labels) -i -1] = ""
-
-        # cleanup unfound labels
-        for i in range(len(labels_x), 0, -1):
-            if labels_x[i-1] is None:
-                labels.pop(i-1)
-
-        return labels
-
-    def major_ticks(self, start: int=0, end: int=1023) -> List[float]:
-        """
-        Returns the major tick location in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
-        """
-        ticks = super().major_ticks(start, end)
-
-        # cleanup unfound labels
-        for i in range(len(ticks), 0, -1):
-            if ticks[i-1] is None:
-                ticks.pop(i-1)
-
-        return ticks
-    
-    def minor_ticks(self, start: int=0, end: int=1023) -> List[float]:
-        """
-        Returns the minor tick location in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
-        """
-        ticks = super().minor_ticks(start, end)
-
-        # cleanup unfound labels
-        for i in range(len(ticks), 0, -1):
-            if ticks[i-1] is None:
-                ticks.pop(i-1)
-
-        return ticks
-
-    def _build_lookup(self, start: int, end: int):
-        """
-        Builds the lookup table for the biexponential transform
-            :param start: the local space start
-            :param end: the local space end
-        """
-        # Source paper: David R. Parks, Mario Roederer, Wayne A. Moore.  A new “Logicle” display method avoids deceptive effects of logarithmic scaling for low signals and compensated data.  Cytometry Part A, Volume 69A, Issue 6, pages 541-551, June 2006.
-        # Use the FlowJo implementation, as transformed by CytoLib: https://github.com/RGLab/cytolib/blob/master/src/transformation.cpp directly from the FlowJo java implementation
-
-        decades = self.pos_decade
-        width = np.log10(-self.width)   # log10 transform to make the data 'equivalent' to decades and extra
-        extra = self.neg_decade
-        channel_range = end - start
-
-        # Make sure width is within expected values
-        if width < 0.5 or width > 3.0:
-            raise ValueError(f"width has to be >= 3.16 (10**0.5) and <= -1000 (10**3), not '{width}'")
-
-        # Make sure extra is within expected values
-        if extra < 0:
-            raise ValueError(f"neg_decade has to be >=0, not '{extra}'")
-
-        # Remove enough width from positive decades to be able to plot the negative decades
-        decades -= (width * 0.5)
-
-        # Set the negative decades
-        extra += (width * 0.5)
-
-        # Find the location for 0
-        zero_channel = int(extra * channel_range / (extra + decades))
-        zero_channel = min(zero_channel, channel_range // 2)              # 0 is at most at the middle of the plot
-
-        if zero_channel > 0:
-            # Get total positive decades
-            decades = extra * channel_range / zero_channel
-        width /= 2 * decades
-
-        maximum = self.end
-        # Calculate positive range (m) as specified in Logicle paper (in natural log units)
-        positive_range = np.log(10.0) * decades
-
-        minimum = maximum / np.exp(positive_range)
-        negative_range = self._log_root(positive_range, width)
-
-        # Amount of points to calculate
-        n_points = channel_range + 1
-
-        # Instantiate table
-        positive = [0.0]*n_points
-        negative = [0.0]*n_points
-        vals = [0.0]*n_points
-
-        # Fill table with natural logged 
-        step = (channel_range) / (n_points-1)
-        fraction = 1 / n_points
-        for i in range(0, n_points, 1):
-            vals[i] = i * step
-            positive[i] = np.exp(i * fraction * positive_range)
-            negative[i] = np.exp(i * fraction * (-negative_range))
-        
-        s = np.exp((positive_range + negative_range) * (width + extra / decades))
-        for i in range(0, n_points, 1):
-            negative[i] *= s
-
-        s = positive[zero_channel] - negative[zero_channel]
-        for i in range(zero_channel, n_points, 1):
-            positive[i] = minimum * (positive[i] - negative[i] - s)
-
-        # Force symmetry by negating the positive channel into the negative decades
-        for i in range(0, zero_channel, 1):
-            m: int = 2 * zero_channel - i
-            positive[i] = -positive[m]
-
-        self.values = vals
-        self.lookup = positive
-
-    @staticmethod
-    def _log_root(positive_range: float, width: float):
-        """
-        Approximates (?) logarithmic root (i think). See _scaler for source
-        """
-        x_low = 0
-        x_high = positive_range
-        
-        x_mean = (x_low + x_high) * 0.5
-        x_delta = abs(int(x_low - x_high))
-        x_delta_last = x_delta
-
-        f_b = -2.0 * np.log(positive_range) + width * positive_range
-        f = 2.0 * np.log(x_mean) + width * positive_range + f_b
-        d_f = 2.0 / (x_mean + width)
-
-        if width == 0:
-            return positive_range
-        
-        for i in range(0, 100, 1):
-            if ((x_mean - x_high) * d_f - f) * ((x_mean - x_low) * d_f - f) >= 0 or abs(int(2 * f)) > abs(int(x_delta_last * d_f)):
-                x_delta = (x_high - x_low) / 2
-                x_mean = x_low + x_delta
-            
-                if x_mean == x_low:
-                    return x_mean
-            
-            else:
-                x_delta = f / d_f
-                t = x_mean
-                x_mean -= x_delta
-            
-                if x_mean == t:
-                    return x_mean
-            
-            if abs(int(x_delta)) < 1.0e-12:
-                return x_mean
-
-            x_delta_last = x_delta
-            f = 2 * np.log(x_mean) + width * x_mean+ f_b
-            d_f = 2 / x_mean + width
-            
-            if f < 0:
-                x_low = x_mean
-            else:
-                x_high = x_mean
-
-        return x_mean
-
-class Plot():
+class Plotter():
     """
     Main plotting class. Load it with data and ask it to generate plots from that data.
     It will use (mainly) plotnine plots
         :param data: FlowJo data
     """
     def __init__(self, data: Union[pd.DataFrame, _Abstract]):
+        self.name: str=None
         self._data: pd.DataFrame=None
 
         self.color_na: str="#E3256B"
@@ -577,16 +153,17 @@ class Plot():
         self.is_channel: bool=True
         self.scale_lim: Tuple[int,int]=[0, 1023]
         self.scales: Dict[str, _Scale]={
-            "FSC-A":LinearScale(start=0, end=262144),
-            "FSC-W":LinearScale(start=0, end=262144),
-            "FSC-H":LinearScale(start=0, end=262144),
-            "SSC-A":LinearScale(start=0, end=262144),
-            "SSC-W":LinearScale(start=0, end=262144),
-            "SSC-H":LinearScale(start=0, end=262144),
-            "Time":LinearScale(start=0, end=262144)
+            "FSC-A":Linear(start=0, end=262144),
+            "FSC-W":Linear(start=0, end=262144),
+            "FSC-H":Linear(start=0, end=262144),
+            "SSC-A":Linear(start=0, end=262144),
+            "SSC-W":Linear(start=0, end=262144),
+            "SSC-H":Linear(start=0, end=262144),
+            "Time":Linear(start=0, end=262144)
         }
 
         if isinstance(data, _Abstract):
+            self.name = os.path.basename(data.path)
             self._data = data.data
             self._check_scale()
         elif isinstance(data, pd.DataFrame):
@@ -607,13 +184,17 @@ class Plot():
         Checks whether the data is channel data (you cannot be 100% sure, but it will give an indication)
         """
         def find_min(column):
-            if pd.api.types.is_numeric_dtype(column):
+            if pd.api.types.is_bool_dtype(column):
+                return 0
+            elif pd.api.types.is_numeric_dtype(column):
                 output = column.min(skipna=True)
             else:
                 return 0
         
         def find_max(column):
-            if pd.api.types.is_numeric_dtype(column):
+            if pd.api.types.is_bool_dtype(column):
+                return 0
+            elif pd.api.types.is_numeric_dtype(column):
                 output = column.max(skipna=True)
             else:
                 return 0
@@ -624,6 +205,8 @@ class Plot():
         if minimum < 0 or maximum > 1023:
             self.is_channel = False
             print("It looks like the data consists of flowjo scale data. Please set the scaling and axis limits yourself.")
+
+    ## abstract plotting functions
 
     def _plot_base(self, data: pd.Dataframe, x: str, y: str, color: str=None, fill: str=None) -> p9.ggplot:
         """
@@ -703,7 +286,7 @@ class Plot():
             panel_grid_minor_x=p9.element_blank(),
             panel_grid_minor_y=p9.element_blank(),
             panel_background=p9.element_rect(fill="#EEEEEEFF", color="#FFFFFFFF"),
-            legend_title=p9.element_blank(),
+            legend_title=p9.element_text(ha="left"),
             legend_key=p9.element_blank(),
             legend_key_width=8,
             legend_key_height=35,
@@ -719,6 +302,10 @@ class Plot():
         if title:
             plot = plot + p9.ggtitle(
                 title
+            )
+        elif self.name:
+            plot = plot + p9.ggtitle(
+                self.name
             )
 
         if x is None:
@@ -750,22 +337,22 @@ class Plot():
             try:
                 scale_x = self.scales[x]
             except KeyError:
-                plot = plot + p9.coords.coord_cartesian(xlim=xlim)
-
-            plot = plot + p9.scale_x_continuous(
-                breaks=scale_x.major_ticks(start=xlim[0], end=xlim[1]),
-                minor_breaks=scale_x.minor_ticks(start=xlim[0], end=xlim[1]),
-                labels=scale_x.labels(start=xlim[0], end=xlim[1]),
-                expand=(0,0),
-                limits=xlim
-            )
+                plot = plot + p9.coords.coord_cartesian()
+            else:
+                plot = plot + p9.scale_x_continuous(
+                    breaks=scale_x.major_ticks(start=xlim[0], end=xlim[1]),
+                    minor_breaks=scale_x.minor_ticks(start=xlim[0], end=xlim[1]),
+                    labels=scale_x.labels(start=xlim[0], end=xlim[1]),
+                    expand=(0,0),
+                    limits=xlim
+                )
 
         if ylim is not None:
             y = plot.mapping["y"]
             try:
                 scale_y = self.scales[y]
             except KeyError:
-                plot = plot + p9.coords.coord_cartesian(ylim=ylim)
+                plot = plot + p9.coords.coord_cartesian()
             else:
                 plot = plot + p9.scale_y_continuous(
                     breaks=scale_y.major_ticks(start=ylim[0], end=ylim[1]),
@@ -788,7 +375,7 @@ class Plot():
         except KeyError:
             raise ValueError("cannot add a colorscale to a ggplot object without defined color mapping")
 
-        if pd.api.types.is_numeric_dtype(plot.data[color]):
+        if pd.api.types.is_numeric_dtype(plot.data[color]) and not pd.api.types.is_bool_dtype(plot.data[color]):
             # Continuous scale
             quantiles = plot.data[color].quantile([0.0, 0.02, 0.98, 1.0])
             if rescale:
@@ -807,7 +394,7 @@ class Plot():
                 na_value=self.color_na
             )
 
-        elif pd.api.types.is_categorical_dtype(plot.data[color]) or pd.api.types.is_string_dtype(plot.data[color]):
+        elif pd.api.types.is_categorical_dtype(plot.data[color]) or pd.api.types.is_string_dtype(plot.data[color]) or pd.api.types.is_bool_dtype(plot.data[color]):
             # Discrete
             
             # the tab10 & 20 discrete colorscales
@@ -820,7 +407,11 @@ class Plot():
                 # Check if colormap covers all cases
                 for level in levels:
                     if level not in color_map:
-                        raise ValueError(f"level '{level}' undefined in color_map")
+                        # ignore np.nans, handled by plotnine
+                        if np.isnan(level):
+                            pass
+                        else:
+                            raise ValueError(f"level '{level}' undefined in color_map")
 
                 plot = plot + p9.scales.scale_color_manual(
                     values=color_map,
@@ -851,7 +442,7 @@ class Plot():
         except KeyError:
             raise ValueError("cannot add a fillscale to a ggplot object without defined fill mapping")
 
-        if pd.api.types.is_numeric_dtype(plot.data[fill]):
+        if pd.api.types.is_numeric_dtype(plot.data[fill]) and not pd.api.types.is_bool_dtype(plot.data[fill]):
             # Continuous scale
             quantiles = plot.data[fill].quantile([0.0, 0.02, 0.98, 1.0])
             if rescale:
@@ -870,7 +461,7 @@ class Plot():
                 na_value=self.fill_na
             )
 
-        elif pd.api.types.is_categorical_dtype(plot.data[fill]) or pd.api.types.is_string_dtype(plot.data[fill]):
+        elif pd.api.types.is_categorical_dtype(plot.data[fill]) or pd.api.types.is_string_dtype(plot.data[fill]) or pd.api.types.is_bool_dtype(plot.data[fill]):
             # Discrete
             
             # the tab10 & 20 discrete colorscales
@@ -883,7 +474,11 @@ class Plot():
                 # Check if fill_map covers all cases
                 for level in levels:
                     if level not in fill_map:
-                        raise ValueError(f"level '{level}' undefined in fill_map")
+                        # ignore np.nans, handled by plotnine
+                        if np.isnan(level):
+                            pass
+                        else:
+                            raise ValueError(f"level '{level}' undefined in fill_map")
 
                 plot = plot + p9.scales.scale_fill_manual(
                     values=fill_map,
@@ -903,34 +498,36 @@ class Plot():
 
         return plot
 
-    def scatter(self, x: str, y: str, c: str, color_map: dict=None) -> p9.ggplot:
+    ## plot implementations
+
+    def scatter(self, x: str, y: str, c: str, c_map: dict=None) -> p9.ggplot:
         """
         Creates a ggplot dotplot object with the correct data and axis
             :param x: the x dimension
             :param y: the y dimension
             :param c: the c dimension - used for color mapping
-            :param color_map: only used for factorized color parameters. Uses the color_map to map the levels
+            :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
         """
         plot = self._plot_base(self.data, x, y, color=c)
         plot = self._plot_theme(plot)
-        plot = self._plot_labels(plot, x=x, y=y)
+        plot = self._plot_labels(plot, title=self.name, x=x, y=y)
         plot = self._plot_scale(plot, xlim=self.scale_lim, ylim=self.scale_lim)
-        plot = self._plot_colorscale(plot, rescale=True, color_map=color_map)
+        plot = self._plot_colorscale(plot, rescale=True, color_map=c_map)
         plot = plot + p9.geom_point(na_rm="False")
 
         return plot
 
-    def raster(self, x: str, y: str, c: str, c_stat: str="density", bin_size: int=4, color_map: dict=None) -> p9.ggplot:
+    def raster(self, x: str, y: str, c: str, c_stat: str="density", bin_size: int=4, c_map: dict=None) -> p9.ggplot:
         """
         Builds a raster plot of the specified data
             :param x: the x dimension
             :param y: the y dimension
             :param c: the c dimension - the parameter used for color mapping
-            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean"]
+            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean", "blank"]
             :param bin_size: effectively the size of the raster squares
-            :param color_map: only used for categorical color parameters. Uses the color_map to map the levels
+            :param c_map: only used for categorical color parameters. Uses the c_map to map the levels
         """
-        if c_stat not in ["density", "max", "min", "mean"]:
+        if c_stat not in ["density", "max", "min", "mean", "blank"]:
             raise ValueError(f"raster plotting has no implementation for c_stat '{c_stat}'")
 
         # Correct source data
@@ -944,6 +541,8 @@ class Plot():
             data = self._bin(data, x, y, z=None, condensor=_condensor_min)
         elif c_stat == "mean":
             data = self._bin(data, x, y, z=None, condensor=_condensor_mean)
+        elif c_stat == "blank":
+            data = self._bin(data, x, y, z=None, condensor=_condensor_blank)
 
         data["__xmax"] = data[x] + 1
         data["__ymax"] = data[y] + 1
@@ -953,14 +552,21 @@ class Plot():
         limits[0] = limits[0] // bin_size
         limits[1] = limits[1] // bin_size
 
+        # build title
+        if self.name:
+            title = f"{self.name}: {c_stat}({c})"
+        else:
+            title = f"{c_stat}({c})"
+
         # Build the plot
         plot = self._plot_base(data, x, y, fill=c)
         plot = self._plot_theme(plot)
-        plot = self._plot_labels(plot, f"{c_stat}({c})", x=x, y=y)
+        plot = self._plot_labels(plot, title=title, x=x, y=y)
         plot = self._plot_scale(plot, xlim=limits, ylim=limits)
-        plot = self._plot_fillscale(plot, rescale=True, fill_map=color_map)
+        plot = self._plot_fillscale(plot, rescale=True, fill_map=c_map)
         plot = plot + p9.geom_rect(
-            p9.aes(
+            data=plot.data,
+            mapping=p9.aes(
                 xmin=x,
                 xmax="__xmax",
                 ymin=y,
@@ -977,11 +583,11 @@ class Plot():
             :param y: the y dimension
             :param z: the z dimension - the parameter used for z-stack formation
             :param c: the c(olor) dimension - the parameter used for color mapping
-            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean"]
+            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean", "blank"]
             :param xy_bin: effectively the size of the raster squares, argument to _reduce()
             :param z_bin: determines the z-stack size, argument to _reduce()
         """
-        if c_stat not in ["density", "max", "min", "mean"]:
+        if c_stat not in ["density", "max", "min", "mean", "blank"]:
             raise ValueError(f"raster plotting has no implementation for c_stat '{c_stat}'")
 
         if not pd.api.types.is_numeric_dtype(self.data[z]):
@@ -1009,6 +615,8 @@ class Plot():
             data = self._bin(data, x, y, z=z, condensor=_condensor_min)
         elif c_stat == "mean":
             data = self._bin(data, x, y, z=z, condensor=_condensor_mean)
+        elif c_stat == "blank":
+            data = self._bin(data, x, y, z=z, condensor=_condensor_blank)
         
         # Add necessary rect information
         data["__xmax"] = data[x] + 1
@@ -1023,13 +631,19 @@ class Plot():
             min_color = quantiles[0.0]
             max_color = quantiles[1.0]
 
+        # build title
+        if self.name:
+            title = f"{self.name}\n{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
+        else:
+            title = f"{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
+
         # Group based on z
         z_stack: List[pd.DataFrame] = [y for x, y in data.groupby(z, as_index=False)]
         plots: List[p9.ggplot] = []
         for i, frame in enumerate(z_stack):
             plot = self._plot_base(frame, x, y, fill=c)
             plot = self._plot_theme(plot)
-            plot = self._plot_labels(plot, f"{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})", x=x, y=y)
+            plot = self._plot_labels(plot, title=title, x=x, y=y)
             plot = self._plot_scale(plot, xlim=limits, ylim=limits)
             # force equal colorscale between frames by custom setting of limits
             plot = plot + p9.scales.scale_fill_cmap(
@@ -1052,6 +666,191 @@ class Plot():
 
         return plots
 
+    def show_3d(self, x: str, y: str, z: str, c: str=None, c_stat="mean", bin_size: int=4, c_map: dict=None) -> None:
+        """
+        Creates a 3dimensional matplotlib figure object with the correct data and axis
+            :param x: the x dimension
+            :param y: the y dimension
+            :param c: the c dimension - used for color mapping
+            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean", "blank"]
+            :param bin_size: effectively the size of the raster squares. by bin_size >12 you will start loosing accuracy on the scales.
+            :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
+        """
+        # Do some basic checks that normally would happen in _plot
+        if not (self.data.columns == x).any():
+            raise ValueError(f"x '{x}' does not specify columns in .data")
+        if not (self.data.columns == y).any():
+            raise ValueError(f"y '{y}' does not specify columns in .data")
+        if not (self.data.columns == z).any():
+            raise ValueError(f"z '{z}' does not specify columns in .data")
+        if c and not (self.data.columns == c).any():
+            raise ValueError(f"c '{c}' does not specify columns in .data")
+
+        if not pd.api.types.is_numeric_dtype(self.data[x]):
+            raise ValueError(f"x '{x}' must be a numeric dtype")
+        if not pd.api.types.is_numeric_dtype(self.data[y]):
+            raise ValueError(f"y '{y}' must be a numeric dtype")
+        if not pd.api.types.is_numeric_dtype(self.data[z]):
+            raise ValueError(f"z '{z}' must be a numeric dtype")
+        
+        if c_stat not in ["density", "max", "min", "mean", "blank"]:
+            raise ValueError(f"binning has no implementation for c_stat '{c_stat}'")
+
+        # Data manipulation here
+        # Correct source data
+        if not c:
+            data = copy.deepcopy(self.data[[x, y, z]])
+        elif c in (x,y,z):
+            data = copy.deepcopy(self.data[[x, y, z]])
+        else:
+            data = copy.deepcopy(self.data[[x, y, z, c]])
+
+        data = self._reduce(data, bin_size)
+
+        # Calculate new limits
+        limits = copy.deepcopy(self.scale_lim)
+        limits[0] = limits[0] // bin_size
+        limits[1] = limits[1] // bin_size
+
+        # 3 dimensional binning
+        if c_stat == "density":
+            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_density)
+        elif c_stat == "max":
+            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_max)
+        elif c_stat == "min":
+            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_min)
+        elif c_stat == "mean":
+            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_mean)
+        elif c_stat == "blank":
+            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_blank)
+
+        # work-around to allow for the plotting of x,y,z defined colors
+        if c in (x,y,z):
+            data["__c"] = data[c]
+            c = "__c"
+            cmap = "nipy_spectral"
+        elif not c:
+            c = "__c"
+            data["__c"] = data[x]
+            cmap = "nipi_spectral"
+        else:
+            cmap = "viridis"
+
+        # manually set colors to allow for proper rescaling
+        if pd.api.types.is_numeric_dtype(data[c]):
+            quantiles = data[c].quantile([0.0, 0.02, 0.98, 1.0])
+            if True:
+                min_color = quantiles[0.02]
+                max_color = quantiles[0.98]
+            else:
+                min_color = quantiles[0.0]
+                max_color = quantiles[1.0]
+            ratio_color = 1 / (max_color - min_color)
+
+            colormap = plt.get_cmap(cmap)
+            data[c] = data[c].apply(lambda x: (x - min_color) * ratio_color)
+            data[c] = data[c].apply(lambda x: colormap(0 if x < 0 else (0.9999999 if x >= 1 else x), alpha=1))
+        elif pd.api.types.is_string_dtype(data[c]):
+
+            levels = data[c].unique()
+            levels = levels[~pd.isnull(levels)]
+            if c_map:
+                # Check if colormap covers all cases
+                for level in levels:
+                    if level not in c_map:
+                        raise ValueError(f"level '{level}' undefined in c_map")
+                c_map["nan"] = self.color_na
+                data[c] = data[c].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
+
+            elif len(levels) <= 10:
+                c_map = plt.get_cmap("tab10")
+                c_map = dict(zip(levels, c_map.colors[:len(levels)]))
+                c_map["nan"] = self.color_na
+                data[c] = data[c].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
+               
+            else:
+                # Use default
+                pass
+
+        # Approximate dot size
+        dot_size = bin_size //4
+        dot_size = 1 if dot_size < 1 else dot_size
+
+        # construct matplotlib figure and axes objects
+        figure = plt.figure(figsize=(12.8, 9.6))
+        axes = figure.add_subplot(111, projection="3d", facecolor="#EEEEEEFF")
+        axes.scatter(
+            xs=data[x],
+            ys=data[y],
+            zs=data[z],
+            c=data[c],
+            zdir="y",
+            depthshade=True,    # dont turn off - bug in matplotlib
+            marker="s",
+            s=dot_size,
+            alpha=1
+        )
+
+        # Set axis ticks / scale / labels
+        axes.set_xlim(limits)
+        axes.set_ylim(limits)
+        axes.set_zlim(limits)
+
+        try:
+            axis_scale = self.scales[x]
+        except ValueError:
+            pass
+        else:
+            # so apparently a specific plot-x can only have a single label
+            major_ticks = np.array(axis_scale.major_ticks(limits[0], limits[1]))
+            unique = np.unique(major_ticks, return_index=True)[1]
+            labels = np.array(axis_scale.labels(limits[0], limits[1]))
+            axes.set_xticks(ticks=major_ticks[unique], minor=False)
+            axes.set_xticklabels(labels=labels[unique])
+            axes.set_xticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
+        axes.set_xlabel(x)
+        
+        # Somehow y <-> z axis are swapped, correct for this
+        try:
+            axis_scale = self.scales[y]
+        except ValueError:
+            pass
+        else:
+            major_ticks = np.array(axis_scale.major_ticks(limits[0], limits[1]))
+            unique = np.unique(major_ticks, return_index=True)[1]
+            labels = np.array(axis_scale.labels(limits[0], limits[1]))
+            axes.set_zticks(ticks=major_ticks[unique], minor=False)
+            axes.set_zticklabels(labels=labels[unique])
+            axes.set_zticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
+        axes.set_zlabel(y)
+        
+        try:
+            axis_scale = self.scales[z]
+        except ValueError:
+            pass
+        else:
+            major_ticks = np.array(axis_scale.major_ticks(limits[0], limits[1]))
+            unique = np.unique(major_ticks, return_index=True)[1]
+            labels = np.array(axis_scale.labels(limits[0], limits[1]))
+            axes.set_yticks(ticks=major_ticks[unique], minor=False)
+            axes.set_yticklabels(labels=labels[unique])
+            axes.set_yticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
+        axes.set_ylabel(z)
+
+        # theming
+        if self.name:
+            axes.set_title(self.name)
+        
+        axes.grid(False)
+        #dont think these parameters work... :(
+        #axes.set_tick_params(which="major", direction="out", width=2.0, lenght=4.0)
+        #axes.set_tick_params(which="minor", direction="out", width=1.0, length=2.0)
+        axes.view_init(elev=0,azim=-90)
+       
+        plt.show()
+
+    ## algorithms
+
     @staticmethod
     def _reduce(data: pd.DataFrame, factor: int=2) -> pd.DataFrame:
         """
@@ -1061,7 +860,7 @@ class Plot():
             :returns: reduced pd.DataFrame
         """
         if factor == 1:
-            return
+            return data
 
         if factor == 0:
             raise ValueError("cannot divide by zero")
@@ -1171,6 +970,45 @@ class Plot():
             :param condensor: the function to condense a bin into a single value
         """
         self._data = self._bin(self.data, x=x, y=y, z=z, condensor=condensor)
+
+    def add_umap(self, parameters: List[str]) -> None:
+        """
+        Calculates the Uniform Manifold Approximation and Projection (UMAP) axis
+        Adds the value of each datapoint under the column names "UMAP1" and "UMAP2"
+            :param parameters: the parameters to use for umap calculation
+        """
+        for param in parameters:
+            if not (param == self.data.columns).any():
+                raise ValueError(f"parameter '{param}' does not specify a column in .data")
+
+        import umap
+        import sklearn.preprocessing
+
+        reducer = umap.UMAP()
+        
+        scaled_data = sklearn.preprocessing.StandardScaler().fit_transform(self.data[parameters])
+        data_umap = pd.DataFrame(reducer.fit_transform(scaled_data))
+        # umap output data is in identical order to input data
+        data_umap.columns = ["__UMAP1", "__UMAP2"]
+
+        self.data["UMAP1"] = data_umap["__UMAP1"]
+        self.data["UMAP2"] = data_umap["__UMAP2"]
+
+    def add_tsne(self) -> None:
+        """
+        Calculates the t-distributed Stochastic Neighbouring Embedding axis
+        Adds the value of each datapoint under the column names "tSNE1" and "tSNE2"
+        """
+        raise NotImplementedError("tSNE has yet to be implemented")
+
+    def add_pca(self):
+        """
+        Calculates the Principle Componet axis
+        Adds the value of each datapoint loading under the column names "PCn" (replace n with number of PC)
+        """
+        raise NotImplementedError("PCA has yet to be implemented")
+
+    ## saving
 
     def save_gif(self, path, x: str, y: str, z: str, c: str):
         """
