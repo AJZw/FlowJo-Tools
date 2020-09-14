@@ -60,13 +60,17 @@ Rasterization is slow as proper statistics can be calculated per bin
 from __future__ import annotations
 
 from .data import _Abstract
+from PIL import Image
 import pandas as pd
 import numpy as np
 import plotnine as p9
-import copy
+import matplotlib.pyplot as plt
+import os
+import io
 import bisect
+import copy
 
-#p9.options.figure_size=(12.8, 9.6)
+p9.options.figure_size=(12.8, 9.6)
 
 def _condensor_density(column: pd.Series) -> Any:
     """
@@ -598,6 +602,29 @@ class Plot():
         """
         return self._data
 
+    def _check_scale(self):
+        """
+        Checks whether the data is channel data (you cannot be 100% sure, but it will give an indication)
+        """
+        def find_min(column):
+            if pd.api.types.is_numeric_dtype(column):
+                output = column.min(skipna=True)
+            else:
+                return 0
+        
+        def find_max(column):
+            if pd.api.types.is_numeric_dtype(column):
+                output = column.max(skipna=True)
+            else:
+                return 0
+
+        minimum = min(self.data.apply(find_min, axis="index"))
+        maximum = max(self.data.apply(find_max, axis="index"))
+
+        if minimum < 0 or maximum > 1023:
+            self.is_channel = False
+            print("It looks like the data consists of flowjo scale data. Please set the scaling and axis limits yourself.")
+
     def _plot_base(self, data: pd.Dataframe, x: str, y: str, color: str=None, fill: str=None) -> p9.ggplot:
         """
         Creates the data base for all plots
@@ -876,15 +903,15 @@ class Plot():
 
         return plot
 
-    def scatter(self, x: str, y: str, z: str, color_map: dict=None) -> p9.ggplot:
+    def scatter(self, x: str, y: str, c: str, color_map: dict=None) -> p9.ggplot:
         """
         Creates a ggplot dotplot object with the correct data and axis
             :param x: the x dimension
             :param y: the y dimension
-            :param z: the z dimension - used for color mapping
+            :param c: the c dimension - used for color mapping
             :param color_map: only used for factorized color parameters. Uses the color_map to map the levels
         """
-        plot = self._plot_base(self.data, x, y, color=z)
+        plot = self._plot_base(self.data, x, y, color=c)
         plot = self._plot_theme(plot)
         plot = self._plot_labels(plot, x=x, y=y)
         plot = self._plot_scale(plot, xlim=self.scale_lim, ylim=self.scale_lim)
@@ -893,29 +920,29 @@ class Plot():
 
         return plot
 
-    def raster(self, x: str, y: str, z: str, z_stat: str="density", bin_size:int=2, color_map: dict=None) -> p9.ggplot:
+    def raster(self, x: str, y: str, c: str, c_stat: str="density", bin_size: int=4, color_map: dict=None) -> p9.ggplot:
         """
         Builds a raster plot of the specified data
             :param x: the x dimension
             :param y: the y dimension
-            :param z: the z dimension - the parameter used for color mapping
-            :param z_stat: the z statistic to calculate choose from ["density", "max", "min", "mean"]
+            :param c: the c dimension - the parameter used for color mapping
+            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean"]
             :param bin_size: effectively the size of the raster squares
-            :param color_map: only used for factorized color parameters. Uses the color_map to map the levels
+            :param color_map: only used for categorical color parameters. Uses the color_map to map the levels
         """
-        if z_stat not in ["density", "max", "min", "mean"]:
-            raise ValueError(f"raster plotting has no implementation for z_stat '{z_stat}'")
+        if c_stat not in ["density", "max", "min", "mean"]:
+            raise ValueError(f"raster plotting has no implementation for c_stat '{c_stat}'")
 
         # Correct source data
-        data = copy.deepcopy(self.data)
+        data = copy.deepcopy(self.data[[x, y, c]])
         data = self._reduce(data, bin_size)
-        if z_stat == "density":
+        if c_stat == "density":
             data = self._bin(data, x, y, z=None, condensor=_condensor_density)
-        elif z_stat == "max":
+        elif c_stat == "max":
             data = self._bin(data, x, y, z=None, condensor=_condensor_max)
-        elif z_stat == "min":
+        elif c_stat == "min":
             data = self._bin(data, x, y, z=None, condensor=_condensor_min)
-        elif z_stat == "mean":
+        elif c_stat == "mean":
             data = self._bin(data, x, y, z=None, condensor=_condensor_mean)
 
         data["__xmax"] = data[x] + 1
@@ -927,9 +954,9 @@ class Plot():
         limits[1] = limits[1] // bin_size
 
         # Build the plot
-        plot = self._plot_base(data, x, y, fill=z)
+        plot = self._plot_base(data, x, y, fill=c)
         plot = self._plot_theme(plot)
-        plot = self._plot_labels(plot, f"{z_stat}({z})", x=x, y=y)
+        plot = self._plot_labels(plot, f"{c_stat}({c})", x=x, y=y)
         plot = self._plot_scale(plot, xlim=limits, ylim=limits)
         plot = self._plot_fillscale(plot, rescale=True, fill_map=color_map)
         plot = plot + p9.geom_rect(
@@ -943,28 +970,87 @@ class Plot():
 
         return plot
 
-    def _check_scale(self):
+    def raster_3d(self, x: str, y: str, z: str, c: str, c_stat: str="density", xy_bin: int=4, z_bin: int=64) -> List[p9.ggplot]:
         """
-        Checks whether the data is channel data (you cannot be 100% sure, but it will give an indication)
+        Creates a z-stack of x-y plots with z_start fill. If saved as gif give a 3dimensional representation 
+            :param x: the x dimension
+            :param y: the y dimension
+            :param z: the z dimension - the parameter used for z-stack formation
+            :param c: the c(olor) dimension - the parameter used for color mapping
+            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean"]
+            :param xy_bin: effectively the size of the raster squares, argument to _reduce()
+            :param z_bin: determines the z-stack size, argument to _reduce()
         """
-        def find_min(column):
-            if pd.api.types.is_numeric_dtype(column):
-                output = column.min(skipna=True)
-            else:
-                return 0
+        if c_stat not in ["density", "max", "min", "mean"]:
+            raise ValueError(f"raster plotting has no implementation for c_stat '{c_stat}'")
+
+        if not pd.api.types.is_numeric_dtype(self.data[z]):
+            raise ValueError(f"z '{z}' must be a numeric dtype to allow for raster_3d plotting")
+
+        # Correct source data
+        data = copy.deepcopy(self.data[[x, y, z, c]])
+
+        # Custom reducing:
+        data[x] = data[x].floordiv(xy_bin)
+        data[y] = data[y].floordiv(xy_bin)
+        data[z] = data[z].floordiv(z_bin)
+
+        # Calculate new limits
+        limits = copy.deepcopy(self.scale_lim)
+        limits[0] = limits[0] // xy_bin
+        limits[1] = limits[1] // xy_bin
+
+        # 3 dimensional binning
+        if c_stat == "density":
+            data = self._bin(data, x, y, z=z, condensor=_condensor_density)
+        elif c_stat == "max":
+            data = self._bin(data, x, y, z=z, condensor=_condensor_max)
+        elif c_stat == "min":
+            data = self._bin(data, x, y, z=z, condensor=_condensor_min)
+        elif c_stat == "mean":
+            data = self._bin(data, x, y, z=z, condensor=_condensor_mean)
         
-        def find_max(column):
-            if pd.api.types.is_numeric_dtype(column):
-                output = column.max(skipna=True)
-            else:
-                return 0
+        # Add necessary rect information
+        data["__xmax"] = data[x] + 1
+        data["__ymax"] = data[y] + 1
 
-        minimum = min(self.data.apply(find_min, axis="index"))
-        maximum = max(self.data.apply(find_max, axis="index"))
+        # Calculate color scale
+        quantiles = data[c].quantile([0.0, 0.02, 0.98, 1.0])
+        if True:
+            min_color = quantiles[0.02]
+            max_color = quantiles[0.98]
+        else:
+            min_color = quantiles[0.0]
+            max_color = quantiles[1.0]
 
-        if minimum < 0 or maximum > 1023:
-            self.is_channel = False
-            print("It looks like the data consists of flowjo scale data. Please set the scaling and axis limits yourself.")
+        # Group based on z
+        z_stack: List[pd.DataFrame] = [y for x, y in data.groupby(z, as_index=False)]
+        plots: List[p9.ggplot] = []
+        for i, frame in enumerate(z_stack):
+            plot = self._plot_base(frame, x, y, fill=c)
+            plot = self._plot_theme(plot)
+            plot = self._plot_labels(plot, f"{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})", x=x, y=y)
+            plot = self._plot_scale(plot, xlim=limits, ylim=limits)
+            # force equal colorscale between frames by custom setting of limits
+            plot = plot + p9.scales.scale_fill_cmap(
+                cmap_name=self.fill_map,
+                limits=(min_color, max_color),
+                guide=p9.guide_colorbar(
+                    ticks=False
+                ),
+                na_value=self.fill_na
+            )
+            plot = plot + p9.geom_rect(
+                p9.aes(
+                    xmin=x,
+                    xmax="__xmax",
+                    ymin=y,
+                    ymax="__ymax"
+                )
+            )
+            plots.append(plot)
+
+        return plots
 
     @staticmethod
     def _reduce(data: pd.DataFrame, factor: int=2) -> pd.DataFrame:
@@ -999,11 +1085,15 @@ class Plot():
         self.scale_lim[1] = self.scale_lim[1] // factor
 
     @staticmethod
-    def _bin(data: pd.DataFrame, x:str, y:str=None, z:str=None, condensor: Callable[pd.Series]=_condensor_mean) -> pd.DataFrame:
+    def _bin(data: pd.DataFrame, x: str, y: str=None, z: str=None, condensor: Callable[pd.Series]=_condensor_mean) -> pd.DataFrame:
         """
         Bins the pandas dataframe in 1(x), 2(x,y) or 3(x,y,z) dimensions.
         The value of the bin will be calculated using all data in that bin using the condensor function.
         The condensor function has to be able to accept categorial and discreet inputs
+            :param x: the x-dimension
+            :param y: (optional) the y-dimension
+            :param z: (optional) the z-dimension
+            :param condensor: the function to condense a bin into a single value
             :returns: the binned pd.DataFrame
         """
         group_x: List[pd.DataFrame] = [y for x, y in data.groupby(x, as_index=False)]
@@ -1070,11 +1160,84 @@ class Plot():
 
         return binned
 
-    def bin(self, x:str, y:str=None, z:str=None, condensor: Callable[pd.Series]=_condensor_mean) -> None:
+    def bin(self, x: str, y: str=None, z: str=None, condensor: Callable[pd.Series]=_condensor_mean) -> None:
         """
         Splits the dataframe in x (and if applicable y, z). Each unique x(,y,z) split will be condensed
         into a single datapoint using the condensor functor. 
         If you want the DataFrame to be returned instead use the staticmethod version _bin().
-            :param factor: the integer division factor
+            :param x: the x-dimension
+            :param y: (optional) the y-dimension
+            :param z: (optional) the z-dimension
+            :param condensor: the function to condense a bin into a single value
         """
         self._data = self._bin(self.data, x=x, y=y, z=z, condensor=condensor)
+
+    def save_gif(self, path, x: str, y: str, z: str, c: str):
+        """
+        Saves a raster_3d of x-y with a z-stack and density of c
+            :param path: the save directory (file name is generated automatically)
+            :param x: the x dimension
+            :param y: the y dimension
+            :param z: the z dimension - the parameter used for z-stack formation
+            :param c: the c(olor) dimension - the parameter used for color mapping
+            :raises ValueError: if function cannot be completed
+        """
+        if path and not os.path.isdir(path):
+            raise ValueError(f"path '{path}' doesnt point to existing directory")
+
+        # Temporarily turn off plot view
+        plt.ioff()
+        
+        plots = self.raster_3d(x=x, y=y, z=z, c=c, c_stat="density", xy_bin=4, z_bin=64)
+
+        images = []
+        buffers = []
+        for plot in plots:
+            figure = plot.draw()
+            buffers.append(io.BytesIO())
+            figure.savefig(buffers[-1], format="png")
+            buffers[-1].seek(0)
+            images.append(Image.open(buffers[-1]))
+
+        images[0].save(
+            os.path.join(path, f"{x}_{y}_{z}.gif"),
+            save_all=True,
+            append_images=images[1:],
+            duration=500,
+            loop=0
+        )
+
+        for buffer in buffers:
+            buffer.close()
+
+        # Close all in the background drawn plots and renable plotview
+        plt.close("all")
+        plt.show()
+
+    def save_png(self, path, x:str, y:str, c:str, c_stat:str="density", c_map:Dict[str, str]=None):
+        """
+        Saves a raster of x-y with color coding of the c_stat of c
+            :param path: the save directory (file name is generated automatically)
+            :param x: the x dimension
+            :param y: the y dimension
+            :param c: the c(olor) dimension - the parameter used for color mapping
+            :param c_stat: the color statistic to plot
+            :param c_map: only used for categorical color parameters. Uses the color_map to map the levels
+            :raises ValueError: if function cannot be completed
+        """
+        if path and not os.path.isdir(path):
+            raise ValueError(f"path '{path}' doesnt point to existing directory")
+
+        plt.ioff()
+
+        plot = self.raster(x=x, y=y, c=c, c_stat=c_stat, color_map=c_map)
+
+        plot.save(
+            filename=f"{x}_{y}_{c_stat}[{c}].png",
+            format="png",
+            path=path,
+            verbose=False
+        )
+
+        plt.close("all")
+        plt.show()
