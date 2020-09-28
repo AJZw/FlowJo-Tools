@@ -5,7 +5,7 @@
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2020 AJ Zwijnenburg
+# Copyright (C) 2020 - AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -987,7 +987,7 @@ class MTX():
             file.write(self._dump())
 
     def __repr__(self) -> str:
-        return self.matrix.__str__()
+        return f"name: {self.name}\n{self.matrix.__str__()}"
 
 if __name__ == "__main__":
     # Get list of files .mtx files representing single stain compensation matrixes

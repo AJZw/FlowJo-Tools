@@ -116,6 +116,12 @@ class _Abstract():
 
         return ticks
 
+    def __eq__(self, other) -> bool:
+        """
+        Test for equality. Should be able to handle all transform classes
+        """
+        raise NotImplementedError("implement in child class")
+
 class Linear(_Abstract):
     """
     Represents a linear scale between the start and end value
@@ -169,6 +175,23 @@ class Linear(_Abstract):
             data[i] = ((data[i] - self.start) * step_size) + start
 
         return data
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, _Abstract):
+            raise ValueError("can only test equality against other transform classes")
+
+        if not isinstance(other, Linear):
+            return False
+        
+        if self.start != other.start:
+            return False
+        if self.end != other.end:
+            return False
+        
+        if self.gain != other.gain:
+            raise NotImplementedError("no clue how to handle gain in LinearTransform, please notify author")
+
+        return True
 
     def __repr__(self) -> str:
         return f"(LinearTransform:{self.start}-{self.end})"
@@ -226,6 +249,20 @@ class Log(_Abstract):
             data[i] = ((np.log10(data[i]) - np.log10(self.start)) * step_size) + start
 
         return data
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, _Abstract):
+            raise ValueError("can only test equality against other transform classes")
+
+        if not isinstance(other, Log):
+            return False
+        
+        if self.start != other.start:
+            return False
+        if self.end != other.end:
+            return False
+
+        return True
 
     def _repr__(self) -> str:
         return f"(LogTransform:{self.start}-{self.end})"
@@ -497,6 +534,24 @@ class Biex(_Abstract):
                 x_high = x_mean
 
         return x_mean
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, _Abstract):
+            raise ValueError("can only test equality against other transform classes")
+
+        if not isinstance(other, Biex):
+            return False
+        
+        if self.neg_decade != other.neg_decade:
+            return False
+        if self.width != other.width:
+            return False
+        if self.pos_decade != other.pos_decade:
+            return False
+        if self.end != other.end:
+            return False
+
+        return True
 
     def __repr__(self) -> str:
         return f"(BiexTransform:{self.end};{self.width:.1f};{self.pos_decade:.1f})"

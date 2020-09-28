@@ -1,6 +1,11 @@
 # FlowJo Tools
 
-A library with (handy) tools for the handling of FlowJo related data
+A library with (handy) tools for the handling of FlowJo related data.  
+• The 'data' module allows for the loading and saving of CSV data.  
+• The 'wsp' module parses and exposes a FlowJo wsp file and allows for the annotation and export of gate annotated data.  
+• The 'plot' module provides FlowJo-like (and more) plotting functions for the data retreived by the data or wsp modules. Also provides an interface for dimensional reduction methods.  
+• The 'transform' module provides basic transformations for plotting.  
+• The 'matrix' module allows the manipulation (and import, export) of FlowJo mtx compensation matrices.
 
 ## Authors
 
@@ -10,7 +15,7 @@ AJ Zwijnenburg
 
 Python >= 3.8.1  
 pandas >= 1.1.1  
-lxml >= 4.5.2 (for matrix, and _wsp_parser module)  
+lxml >= 4.5.2 (for matrix & wsp module)  
 plotnine >= 0.7.1 (for plot module)  
 umap-learn >=0.4.6 (for plot module Plotter.add_umap())
 
@@ -45,17 +50,18 @@ sample = workspace.samples["sample id/name"]
 # Each sample contains many useful attributes
 sample.id           # sample id
 sample.name         # sample name
-sample.data         # sample data (deepcopy)
+sample.data()       # sample data (deepcopy)
+sample.gate_data()  # sample data with gate membership information (deepcopy)
 sample.count        # the amount of events in this sample
 sample.cytometer    # the cytometer this data is acquired on
 sample.compensation # this sample's compensation matrix
 sample.transforms   # the data parameter scale transformations
-sample.keywords     # the .fcs keywords
+sample.keywords     # the FCS keywords
 sample.gates        # the sample gate structure
 
 # The measured data is not stored in the .wsp file and should be added manually
 # Make sure the export format (channel or scale) and compensation state are correct.
-sample.load_data("path/to/exported_compensated_channel_data.csv", format="channel", is_compensated=True)
+sample.load_data("path/to/exported_compensated_channel_data.csv", format="channel", compensated=True)
 
 # The events contained in a (sub)gate can be retreive:
 gate_node = samples.gates["gate_name"]
@@ -68,7 +74,8 @@ gate_node.parent    # the parent gate (if applicable)
 gate_node.sample    # the sample this gate belong to
 gate_node.x         # the gate's x dimension
 gate_node.y         # the gate's y dimension
-gate_node.data      # returns the data of all cells included in the gate (deepcopy)
+gate_node.data()    # returns the data of all cells included in the gate (deepcopy)
+gate_node.gate_data() # returns the data of all cells included in the gate with gate membership information (deepcopy)
 gate_node.count     # returns the amount of cells included in this gate
 gate_node.gates     # the subgate structure
 gate_node.polygon   # returns a polygon representation of the gate (handy for plotting)
@@ -80,6 +87,10 @@ group.name          # the group name
 group.ids           # A list of the identifiers of all samples contained in this group
 group.names         # A list of the names of all samples contained in this group
 group.gates         # The group gate structure, this doesnt have to be identical to the sample gate structure!
+group.data()        # Concatenated sample data (deepcopy)
+group.gate_data()   # Concatenated sample data with gate membership information (deepcopy)
+group.keywords("$CYT") # The keyword(s) data of all samples in the group
+group.transforms()  # The transforms used on the samples in the group
 group["sample id/name"] # Retreive a specific sample contained in the group
 
 # Each cytometer contains the following data:
@@ -89,10 +100,35 @@ cyto.name           # the name of the cytometer
 cyto.compensation   # all compensation matrixes defined in the fcs-files for this cytometer ('Acquisition-defined')
 cyto.transforms     # the cytometer's DEFAULT transformations
 
-# The sample data can be plotted with correct scales as follows:
-plot = Plotter(sample.data)
-plot.scale.update(sample.transforms)
-plot.scatter("X", "Y", "Color")
+## An example to retreive the data of a specific group of samples ##
+# First create a new group containing the samples of interest
+workspace.groups.add(
+    "new_group_name",
+    ["sample id/name 1", "sample id/name2", "sample id/name3"]
+)
+group = workspace.groups["new_group_name"]
+
+# You can downsample the samples to equal numbers
+group.subsample(n=3000)
+
+# Export the data without or with gate membership annotation
+data_without_gate = group.data()
+data_with_gate = group.gate_data()
+
+# You might want to only export data/gates from a specific gate node (also works for .data())
+data = group.gate_data(start_node="this/is/the/starting/node")
+
+# And maybe you want to factorize multiple gates into a single factor
+factor = {"factor_name":{
+    "level_a":"name a",
+    "level_b":"name b"
+}}
+data = group.gate_data(factor=factor)
+
+# The exported data can be plotted with correct scales as follows:
+plot = Plotter(data)
+plot.scale.update(group.transforms())
+plot.scatter("x", "y", "color")
 ```
 
 FlowJo data export with gata annotation example:
@@ -164,12 +200,8 @@ v1.0 - Implemented the compensation matrix tools and flowjo data annotated gate 
 v1.1 - Implemented the basic plotting functionalities  
 v1.2 - Implemented scatter_3d and convenience saving functions  
 v1.3 - Implemented show_3d  
-v1.4 - Implemented FlowJo wsp parser
-
-## ToDo
-
-Allow for creating of groups  
-Have a specific export towards flowjo.plot
+v1.4 - Implemented FlowJo wsp parser  
+v1.5 - Implemented factorized gate membership export
 
 ## License
 

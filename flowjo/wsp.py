@@ -1,5 +1,5 @@
 ##############################################################################     ##    ######
-#    A.J. Zwijnenburg                   2020-09-15           v1.0                 #  #      ##
+#    A.J. Zwijnenburg                   2020-09-30           v1.0                 #  #      ##
 #    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
@@ -32,9 +32,11 @@ A gate node representing the data included in the gate
 .name       - the gate's name
 .x          - the gate's x dimension
 .y          - the gate's y dimension
-.data       - returns the data of all cells included in the gate (deepcopy)
+.data()     - returns the data of all cells included in the gate (deepcopy)
+.gate_data()- returns the data of all cells included in the gate, with annotated gate membership (deepcopy)
 .gates      - returns a list of all direct subgates
 .count      - returns the amount of cells included in this gate
+.path       - returns the full subgate structure of the current gate node
 .transforms - returns the dictionary of parameter transforms
 .polygon    - returns a polygon representation of the gate
 .[]         - returns the specified subgate
@@ -48,7 +50,8 @@ A class representing a single sample and all its components
 .name       - the sample name
 .path_fcs   - the path to the source fcs file
 .path_data  - the path to the loaded data
-.data       - the data of this sample (deepcopy)
+.data()     - the data of this sample (deepcopy)
+.gate_data()- the data of this sample, with annotated gate membership (deepcopy)
 .data_format - whether the internal data is in 'scale' or 'channel' units
 .is_compensated - whether the internal data is compensated
 .cytometer  - the cytometer this data is acquired on
@@ -60,14 +63,22 @@ A class representing a single sample and all its components
 .load_data()- loads 'scale' or 'channel' data (in .csv format) into the sample
 .subsample()- subsamples the data
 
+:class: _Gates
+Provides a nice 'attributy' getter of gates data
+.gates      - returns a list of all root gates
+.[]         - returns the specified gate node
+
 :class: Group
 A class representing a group of samples
 .id         - the unique id of the group (identical to .name)
 .name       - the name of the group
 .gates      - the group gates (does not have to be identical to the gates of each individual sample)
+.data()     - the concatenated data of all samples in the group (deepcopy)
+.gate_data()- the concatenated data of all samples in the group, including gate membership (deepcopy)
+.keywords() - the specified keyword(s) of all samples in the group
+.transforms() - the transforms for the data parameters
 .ids        - the identifiers of the samples included in this group
 .names      - the names of the samples included in this group
-.data       - returns a dictionary of the data of each included sample
 .__len__    - returns the amount of samples in this group
 .[]         - returns the specified sample (first lookup by id, then by name)
 .__contains__ - whether the group contains the specified sample (first lookup by id, then by name)
@@ -127,7 +138,7 @@ Provides a nice 'attributy' getter of compensation matrixes
 
 from __future__ import annotations
 
-from ._parser_wsp import Parser, Gate, _AbstractGating, CHANNEL_MIN, CHANNEL_MAX
+from ._parser_wsp import Parser as _Parser, Gate, _AbstractGating, CHANNEL_MIN, CHANNEL_MAX
 from ._parser_wsp import Cytometer as _Cytometer, Sample as _Sample, Group as _Group, Gate as _Gate
 from .matrix import MTX
 from .transform import _Abstract as _AbstractTransform
@@ -143,30 +154,46 @@ class Gate:
     Wrapping this class allows for additional convenience functions and the hiding
     of implementation details.
         :param sample: the sample this gate belongs to
-        :param data: the parser _Sample object
+        :param data: the parser _Gate object
         :param parent: the parent gate
     """
     def __init__(self, sample: Sample, gate_data: _Gate, parent_gate: Gate=None) -> None:
         self.sample: Sample = sample
         self.parent: Gate = parent_gate
-        self._wsp: _Gate = gate_data
-        self._gating: _AbstractGating = self._wsp._gating
+        self._gate: _Gate = gate_data
+        self._gating: _AbstractGating = self._gate._gating
 
-        self.id = self._wsp.id
-        self.name = self._wsp.name
-        self.x = self._wsp.x
-        self.y = self._wsp.y
+        self.id = self._gate.id
+        self.name = self._gate.name
+        self.x = self._gate.x
+        self.y = self._gate.y
 
-        self.boolean = self._wsp.boolean
+        self.boolean = self._gate.boolean
 
         self._gates: Dict[str, Gate] = {}
         self._in_gate: pd.Series = None
 
-        for gate in self._wsp.gates:
-            gate = self._wsp.gates[gate]
+        for gate in self._gate.gates:
+            gate = self._gate.gates[gate]
             self._gates[gate.name] = Gate(self.sample, gate, self)
 
+        self.__iter: int = None
+
     @property
+    def path(self) -> str:
+        """
+        Returns the full gating path ('/' separated gate structure)
+        """
+        gate_path = self.name
+        parent = self.parent
+        while True:
+            if parent is None:
+                break
+            gate_path = f"{parent.name}/{gate_path}"
+            parent = parent.parent
+
+        return gate_path
+
     def data(self) -> pd.DataFrame:
         """
         Returns the data for all events contained in this gate (this takes the entire gate structure into account)
@@ -178,6 +205,7 @@ class Gate:
         # Make use of _data attribute to not make unnecessary deepcopies
         data = copy.deepcopy(self.sample._data.loc[self._in_gate])
 
+        # Translate column names from identifier to names
         column_names = []
         for column in data.columns:
             try:
@@ -189,6 +217,35 @@ class Gate:
             column_names.append(name)
 
         data.columns = column_names
+
+        return data
+
+    def gate_data(self, factor: Dict[str, Dict[str, str]]=None) -> pd.DataFrame:
+        """
+        Getter for the data with gate annotations. Makes a deepcopy of the data
+            :param factor: specifyer for factorization of gates membership. Dict[factor_column_name, Dict[gate_id, factor_level_name]]
+        """
+        data = self.data()
+
+        remove = self.path + "/"
+
+        for gate in self._gates:
+            self._gates[gate]._annotate_gate(data, remove)
+
+        # factorize gate columns
+        if factor is not None:
+            #redundant = []
+            for factor_name in factor:
+                data[factor_name] = np.nan
+
+                factor_levels = factor[factor_name]
+                for factor_level in factor_levels:
+                    data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
+
+                    #redundant.append(factor_level)
+
+            # Remove now redundant columns
+            #data.drop(columns=redundant, inplace=True)
 
         return data
 
@@ -250,6 +307,24 @@ class Gate:
         for gate in self._gates:
             self._gates[gate]._apply_gates()
 
+    def _annotate_gate(self, data: pd.DataFrame, remove: str=None) -> None:
+        """
+        Adds the True/False annotation of self._in_gate to the data. Makes sure all indexes are available.
+        Recurses into the child-gates
+            :param data: the dataframe to annotate
+            :param remove: the prefixed gatenodes to remove in the output column headers
+        """
+        gate = self.path.split(remove, 1)
+        if len(gate) < 2:
+            gate = gate[0]
+        else:
+            gate = gate[1]
+
+        data[gate] = self._in_gate
+        
+        for gate in self._gates:
+            self._gates[gate]._annotate_gate(data, remove)
+
     def __len__(self) -> int:
         return len(self._gates)
 
@@ -273,6 +348,9 @@ class Gate:
         Returns the specified Gate. Accepts chained gates (gate chains separated by '/')
             :param gate: the sample id or name
         """
+        if not isinstance(gate, str):
+            raise KeyError(f"gate index should inherit str not '{gate.__class__.__name__}'")
+
         gates = gate.split("/", 1)
 
         gate = self._gates[gates[0]]
@@ -282,23 +360,20 @@ class Gate:
         else:
             return gate
 
-    def __repr__(self) -> str:
-        # Gate stack
-        gates = self.name
+    def __iter__(self):
+        self.__iter = 0
+        return self
 
-        parent = self.parent
-        while True:
-            if parent is not None:
-                gates = parent.name + "/" + gates
-                parent = parent.parent
-            else:
-                break
-
-        # If data has not been loaded, no counts can be given
-        if self._in_gate is None:
-            return f"(Gate[{gates}][x])"
-
-        return f"(Gate[{gates}][{self.count}])"
+    def __next__(self):
+        keys = list(self._gates.keys())
+        
+        if len(keys) <= self.__iter:
+            raise StopIteration
+        
+        key = keys[self.__iter]
+        self.__iter += 1
+        
+        return self._gates[key]
 
     def _gate_repr(self, prefix: str, padding: int) -> str:
         """
@@ -349,8 +424,16 @@ class Gate:
 
         return node_repr
 
-    def __str__(self) -> str:
-        return self._gate_repr(prefix="")
+    def __repr__(self) -> str:
+        # Append parent gates
+        if self.parent is not None:
+            output = self.parent.path + "/"
+        else:
+            output = ""
+        
+        output += self._gate_repr(prefix="", padding=len(self.name) + 2)
+        
+        return output
 
 class Sample:
     """
@@ -362,12 +445,12 @@ class Sample:
     """
     def __init__(self, parser: _Parser, sample_data: _Sample) -> None:
         self._parser: _Parser = parser
-        self._wsp: _Sample = sample_data
+        self._sample: _Sample = sample_data
 
-        self.id: str = self._wsp.id
-        self.name: str = (self._wsp.name).split(os.extsep, 1)[0]
+        self.id: str = self._sample.id
+        self.name: str = (self._sample.name).split(os.extsep, 1)[0]
 
-        self.path_fcs: str = self._wsp.path
+        self.path_fcs: str = self._sample.path
         self.path_data: str = None
 
         # Make sure to keep track of the state of the data
@@ -382,8 +465,8 @@ class Sample:
                 self.cytometer = Cytometer(self._parser, cytometer)
                 break
         
-        self.compensation: MTX = self._wsp.compensation
-        self._transforms: Dict[str, _AbstractTransform] = self._wsp.transforms
+        self.compensation: MTX = self._sample.compensation
+        self._transforms: Dict[str, _AbstractTransform] = self._sample.transforms
         
         self._gates: _Gates = _Gates(self)
 
@@ -408,7 +491,7 @@ class Sample:
         """
         Getter for the keywords. Not very pythonic but cleans-up the __dict__ a lot.
         """
-        return self._wsp.keywords
+        return self._sample.keywords
 
     def load_data(self, path: str, format: str, compensated: bool) -> None:
         """
@@ -488,29 +571,63 @@ class Sample:
         
         self.is_compensated = True
 
-    @property
-    def data(self) -> pd.DataFrame:
+    def data(self, start_node: str=None) -> pd.DataFrame:
         """
         Getter for the data. Transform the dataframe column names from the internal identifiers
         to the correct parameter names. Makes a deepcopy of the data.
+            :param start_node: the gate node to retreive the data from
         """
         if self._data is None:
             raise ValueError("sample does not contain any data. Make sure to load_data()")
 
-        # I need to deep copy to not overwrite the original column id's
-        data = copy.deepcopy(self._data)
+        if start_node is None:
+            # Sample needs to handle all data handling
 
-        column_names = []
-        for column in data.columns:
-            try:
-                name = self._parameter_names[column]
-            except KeyError:
-                name = column
-            if name == "":
-                name = column
-            column_names.append(name)
+            # I need to deep copy to not overwrite the original column id's
+            data = copy.deepcopy(self._data)
 
-        data.columns = column_names
+            # Translate column names from identifier to names
+            column_names = []
+            for column in data.columns:
+                try:
+                    name = self._parameter_names[column]
+                except KeyError:
+                    name = column
+                if name == "":
+                    name = column
+                column_names.append(name)
+
+            data.columns = column_names
+        
+        else:
+            # Return from a gate node -> gate node takes care of data handling
+            data = self.gates[start_node].data()
+
+        return data
+
+    def gate_data(self, start_node: str=None, factor: Dict[str, Dict[str, str]]=None) -> pd.DataFrame:
+        """
+        Getter for the data with gate annotations. Makes a deepcopy of the data
+            :param start_node: the gate node to retreive the data from
+            :param factor: specifyer for factorization of gates membership. Dict[factor_column_name, Dict[gate_id, factor_level_name]]
+        """
+        if start_node is None:
+            # Sample need to handle the data
+            data = self.data()
+            self.gates._annotate_gate(data)
+
+            # factorize gate columns
+            if factor is not None:
+                for factor_name in factor:
+                    data[factor_name] = np.nan
+
+                    factor_levels = factor[factor_name]
+                    for factor_level in factor_levels:
+                        data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
+
+        else:
+            # Return from a gate node -> gate node takes care of data handling
+            data = self.gates[start_node].gate_data(factor=factor)
 
         return data
 
@@ -548,16 +665,16 @@ class Sample:
         return len(self._data.index)
 
     def __len__(self) -> int:
-        raise AttributeError("len attribute is ambiguous for Sample object, for amount of gates use .gates attribute, for data size use .count attribute")
+        raise AttributeError("__len__ is ambiguous for Sample object, for amount of gates use .gates attribute, for data size use .count attribute")
 
     def __getitem__(self, gate: str) -> Gate:
-        raise AttributeError(".[] is ambiguous for Sample object, to get a specific gate use the .gates attribute, for data column use .data attribute")
+        raise AttributeError(".__getitem__ is ambiguous for Sample object, to get a specific gate use the .gates attribute, for data column use .data()")
 
     def __contains__(self, sample: str) -> bool:
         """
         Checks whether the sample id/name exists within the data
         """
-        raise AttributeError("contains attribute is ambiguous for Sample object, for gates check using .gates attribute, for data check using .data attribute")
+        raise AttributeError(".__contains__ is ambiguous for Sample object, for gates check using .gates attribute, for data check using .data()")
 
     def __repr__(self) -> str:
         output = f"name:   {self.name}\nid:     {self.id}"
@@ -601,9 +718,15 @@ class _Gates:
 
         self._gates: Dict[str, Gate] = {}
 
-        for gate in self._sample._wsp.gates:
-            gate = self._sample._wsp.gates[gate]
+        for gate in self._sample._sample.gates:
+            gate = self._sample._sample.gates[gate]
             self._gates[gate.name] = Gate(self._sample, gate, None)
+
+        self.__iter: int = None
+
+    @property
+    def gates(self) -> str:
+        return list(self._gates.keys())
 
     def _apply_gates(self) -> None:
         """
@@ -611,6 +734,15 @@ class _Gates:
         """
         for gate in self._gates:
             self._gates[gate]._apply_gates()
+
+    def _annotate_gate(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Adds the True/False annotation of self._in_gate to the data. Makes sure all indexes are available.
+        Recurses into the child-gates
+            :param data: the dataframe to annotate
+        """      
+        for gate in self._gates:
+            self._gates[gate]._annotate_gate(data, remove=None)
 
     def __len__(self) -> int:
         """
@@ -623,6 +755,9 @@ class _Gates:
         Returns the specified Gate. Accepts chained gates (gate chains separated by '/')
             :param gate: the sample id or name
         """
+        if not isinstance(gate, str):
+            raise KeyError(f"gate index should inherit str not '{gate.__class__.__name__}'")
+
         gates = gate.split("/", 1)
 
         gate = self._gates[gates[0]]
@@ -631,6 +766,21 @@ class _Gates:
             return gate[gates[1]]
         else:
             return gate
+
+    def __iter__(self):
+        self.__iter = 0
+        return self
+
+    def __next__(self):
+        keys = list(self._gates.keys())
+        
+        if len(keys) <= self.__iter:
+            raise StopIteration
+        
+        key = keys[self.__iter]
+        self.__iter += 1
+
+        return self._gates[key]
 
     def __contains__(self, gate: str) -> bool:
         """
@@ -665,26 +815,82 @@ class _Gates:
 class Group:
     """
     Convenience wrapper around a FlowJo workspace parser group object.
-    Wrapping this class allows for additional convenience functions and the hiding
-    of implementation details.
+    This class allows for additional convenience functions and the hiding
+    of implementation details. Use the classmethods for proper instantiation
         :param parser: the workspace parser to link identifiers to sample data
-        :param group_data: the parser _Group object
     """
-    def __init__(self, parser: _Parser, group_data: _Group) -> None:
+    def __init__(self, parser: _Parser) -> None:
         self._parser: _Parser = parser
-        self._wsp: _Group = group_data
+        self._group: _Group = None
 
-        self.name: str = self._wsp.name
-        self.gates: Dict[str, Gate] = self._wsp.gates
+        self.name: str = None
+        self.gates: Dict[str, Gate] = {}
 
         self._data: Dict[str, Sample] = {}
         self._names: List[str] = []
 
-        for sample_id in self._wsp.samples:
-            self._data[sample_id] = Sample(self._parser, self._parser.samples[sample_id])
+        self.__iter: int = None
 
-        for sample_id in self._data:
-            self._names.append(self._data[sample_id].name)
+    @classmethod
+    def from_wsp(cls, parser: _Parser, group_data: _Group):
+        """
+        Instantiates a Group from a workspace parser
+            :param parser: the workspace parser to link identifiers to sample data
+            :param group_data: the parser _Group object
+        """
+        cls = cls(parser)
+        cls._group = group_data
+        cls.name = cls._group.name
+        cls.gates = cls._group.name
+
+        for sample_id in cls._group.samples:
+            cls._data[sample_id] = Sample(cls._parser, cls._parser.samples[sample_id])
+
+        for sample_id in cls._data:
+            cls._names.append(cls._data[sample_id].name)
+
+        return cls
+
+    @classmethod
+    def from_samples(cls, parser: _Parser, name: str, samples: List[Sample]):
+        """
+        Instantiates a Group from a workspace parser
+            :param parser: the workspace parser to link identifiers to sample data
+            :param name: the group name
+            :param samples: a list of Sample's to add to the group
+        """
+        cls = cls(parser)
+        cls.name = name
+
+        # Check transform equality of samples
+        if len(samples) >= 2:
+            comparison = samples[0]._transforms
+            for i in range(1, len(samples), 1):
+                for key in comparison:
+                    # Only compare parameters that are in both datasets
+                    try:
+                        transform_b = samples[i]._transforms[key]
+                    except KeyError:
+                        continue
+                    
+                    transform_a = comparison[key]
+        
+                    # Time is scaled to fit in the data range, so always uncomparable
+                    if key == "Time":
+                        if type(transform_a) != type(transform_b):
+                            raise ValueError(f"'Time' transform should be of identical type not '{samples[0].name}:{sample_transform[key].__class__.__name__}' and '{samples[i].name}:{transform[key].__class__.__name__}'")
+                        continue
+
+                    if transform_a != transform_b:
+                        raise ValueError(f"sample '{samples[0].name}:{key}'-'{samples[i].name}:{key}' differ in parameter transforms")
+
+        for sample in samples:
+            cls._data[sample.id] = sample
+
+        for sample_id in cls._data:
+            cls._names.append(cls._data[sample_id].name)
+
+        return cls
 
     @property
     def id(self) -> str:
@@ -694,13 +900,6 @@ class Group:
         return self.name
 
     @property
-    def names(self) -> List[str]:
-        """
-        Getter for sample names
-        """
-        return self._names
-
-    @property
     def ids(self) -> List[str]:
         """
         Returns the sample unique identifiers
@@ -708,11 +907,103 @@ class Group:
         return list(self._data.keys())
 
     @property
-    def data(self) -> Dict[str, Sample]:
+    def names(self) -> List[str]:
         """
-        Getter for all sample data, indexed by unique sample id
+        Getter for sample names
         """
-        return self._data
+        return self._names
+
+    def data(self, start_node: str=None) -> pd.DataFrame:
+        """
+        Returns a combined DataFrame of all samples in this group.
+        The returned DataFrame has a new index!
+            :param start_node: the gate node to retreive the data from
+        """
+        data: List[pd.DataFrame] = []
+        for sample in self._data:
+            data.append(self._data[sample].data(start_node))
+        return pd.concat(data, ignore_index=True)
+
+    def gate_data(self, start_node: str=None, factor: Dict[str, Dict[str, str]]=None) -> pd.DataFrame:
+        """
+        Returns a combined DataFrame of all samples in this group with gate annotation.
+        The returned DataFrame has a new index!
+            :param start_node: the gate node to retreive the data from
+            :param factor: specifyer for factorization of gates membership. Dict[factor_column_name, Dict[gate_id, factor_level_name]]
+        """
+        data: List[pd.DataFrame] = []
+        for sample in self._data:
+            data.append(self._data[sample].gate_data(start_node, factor))
+        return pd.concat(data, ignore_index=True)
+
+    def keywords(self, keywords: Union[str, List[str]]) -> pd.DataFrame:
+        """
+        Gets the specified keyword(s) from all samples in the group.
+        If keyword doesnt exists returns a np.nan instead.
+            :param keywords: the keyword(s) to lookup
+        """
+        if isinstance(keywords, str):
+            keywords = [keywords]
+
+        data: List[pd.Series] = []
+        for keyword in keywords:
+            data_keyword: List[str] = []
+            for sample_id in self._data:
+                try:
+                    data_keyword.append(self._data[sample_id].keywords[keyword])
+                except KeyError:
+                    data_keyword.append(np.nan)
+            data.append(pd.Series(data_keyword))
+        data = pd.concat(data, axis=1)
+
+        # Set correct column and index specifyers
+        data.columns = keywords
+        data.index = self._names
+
+        return data
+
+    def transforms(self) -> Dict[str, _AbstractTransform]:
+        """
+        Returns a general list of transforms. Transforms shouldnt be different between samples
+        and the data is not corrected to 'fix' this. This should be fixed inside FlowJo itself. 
+        The 'Time' transform is by definition not corrected between samples. 
+        """
+        transform: Dict[str, _AbstractTransform] = {}
+
+        # Update the dictionary to make sure all parameters are covered
+        for sample_id in self._data:
+            transform.update(self._data[sample_id]._transforms)
+
+        # Check for transform disparities
+        for sample_id in self._data:
+            sample_transform = self._data[sample_id]._transforms
+            for key in sample_transform:
+                # Time is scaled to fit in the data range, so always uncomparable
+                if key == "Time":
+                    if type(sample_transform[key]) != type(transform[key]):
+                        raise ValueError(f"'Time' transform should be of identical type not '{sample_transform[key].__class__.__name__}' and '{transform[key].__class__.__name__}'")
+                    
+                    continue
+                
+                if sample_transform[key] != transform[key]:
+                    raise ValueError(f"transform '{key}' differs in transforms")
+
+        # 'Fix' parameter names
+        names = self._data[sample_id]._parameter_names
+
+        output = {}
+        for key in list(transform.keys()):
+            try:
+                name = names[key]
+            except KeyError:
+                name = key
+
+            if name == "":
+                name = key
+
+            output[name] = transform[key]
+        
+        return output
 
     def __len__(self) -> int:
         return len(self._data)
@@ -724,6 +1015,9 @@ class Group:
         So will raise an error if the key would match multiple names
             :param sample: the sample id or name
         """
+        if not isinstance(sample, str):
+            raise KeyError(f"sample index should inherit str not '{sample.__class__.__name__}'")
+
         try:
             data = self._data[sample]
         except KeyError:
@@ -743,6 +1037,21 @@ class Group:
                 break
 
         return self._data[sample_id]
+
+    def __iter__(self):
+        self.__iter = 0
+        return self
+
+    def __next__(self):
+        keys = list(self._data.keys())
+        
+        if len(keys) <= self.__iter:
+            raise StopIteration
+        
+        key = keys[self.__iter]
+        self.__iter += 1
+        
+        return self._data[key]
 
     def __contains__(self, sample: str) -> bool:
         """
@@ -792,12 +1101,28 @@ class Group:
         if not csv_files:
             raise ValueError(f"path '{path}' doesnt contain any csv files")
 
+        warnings: List[str] = []
         for sample_id in self.ids:
             sample_name = self[sample_id].name
             try:
                 self[sample_id].load_data(csv_files[sample_name], format, compensated)
             except KeyError:
-                print(f"no data file found for sample with name '{sample_name}'")
+                warnings.append(f"no data file found for sample with name '{sample_name}'")
+        
+        if warnings:
+            print("\n".join(warnings))
+
+    def subsample(self, n: int=None) -> None:
+        """
+        Subsamples all samples in this group to the specified n. If no n is given, subsamples
+        to the lowest sample.count
+        """
+        if n is None:
+            counts = [self._data[x].count for x in self._data]
+            n = min(counts)
+        
+        for sample_id in self._data:
+            self._data[sample_id].subsample(n=n)
 
 class Cytometer:
     """
@@ -809,17 +1134,17 @@ class Cytometer:
     """
     def __init__(self, parser: _Parser, cytometer_data: _Group) -> None:
         self._parser: _Parser = parser
-        self._wsp: _Group = cytometer_data
+        self._cytometer: _Group = cytometer_data
 
-        self.name: str = self._wsp.cyt
+        self.name: str = self._cytometer.cyt
         
         self.compensation: List[MTX] = []
-        for matrix_id in self._wsp.transforms:
+        for matrix_id in self._cytometer.transforms:
             self.compensation.append(self._parser.matrices[matrix_id])
         
         self.transforms: List[Dict[str, AbstractTransform]] = []
-        for matrix_id in self._wsp.transforms:
-            self.transforms.append(self._wsp.transforms[matrix_id])
+        for matrix_id in self._cytometer.transforms:
+            self.transforms.append(self._cytometer.transforms[matrix_id])
 
     @property
     def id(self) -> str:
@@ -841,7 +1166,7 @@ class Workspace:
         :param path to the flowjo workspace file
     """
     def __init__(self, path: str=None):
-        self.parser = Parser(path)
+        self.parser = _Parser(path)
         
         self._cytometers = _Cytometers(self)
         self._samples = _Samples(self)
@@ -930,12 +1255,25 @@ class Workspace:
         if not csv_files:
             raise ValueError(f"path '{path}' doesnt contain any csv files")
 
+        warnings: List[str] = []
         for sample_id in self.samples.ids:
             sample_name = self.samples[sample_id].name
             try:
                 self.samples[sample_id].load_data(csv_files[sample_name], format, compensated)
             except KeyError:
-                print(f"no data file found for sample with name '{sample_name}'")
+                warnings.append(f"no data file found for sample with name '{sample_name}'")
+
+        if warnings:
+            print("\n".join(warnings))
+
+    def __repr__(self) -> str:
+        output = f"workspace: {self.parser.name}"
+        output += f"\n samples[{self.samples.__len__()}]"
+        output += f"\n groups[{self.groups.__len__()}]"
+        output += f"\n cytometers[{self.cytometers.__len__()}]"
+        output += f"\n compensation[{self.compensation.__len__()}]"
+
+        return output
 
 class _Samples:
     """
@@ -950,6 +1288,8 @@ class _Samples:
 
         if self._workspace.parser.path:
             self._load()
+
+        self.__iter: int = None
 
     def _load(self) -> None:
         """
@@ -1000,6 +1340,9 @@ class _Samples:
         So will raise an error if the key would match multiple names
             :param matrix: the sample id or name
         """
+        if not isinstance(sample, str):
+            raise KeyError(f"sample index should inherit str not '{sample.__class__.__name__}'")
+
         try:
             data = self._data[sample]
         except KeyError:
@@ -1019,6 +1362,21 @@ class _Samples:
                 break
 
         return self._data[sample_id]
+
+    def __iter__(self):
+        self.__iter = 0
+        return self
+
+    def __next__(self):
+        keys = list(self._data.keys())
+        
+        if len(keys) <= self.__iter:
+            raise StopIteration
+        
+        key = keys[self.__iter]
+        self.__iter += 1
+        
+        return self._data[key]
 
     def __contains__(self, sample: str) -> bool:
         """
@@ -1055,12 +1413,14 @@ class _Groups:
         if self._workspace.parser.path:
             self._load()
 
+        self.__iter: int = None
+
     def _load(self) -> None:
         """
         Loads the data from parser into the representation
         """
         for group in self._workspace.parser.groups:
-            self._data[group] = Group(self._workspace.parser, self._workspace.parser.groups[group])
+            self._data[group] = Group.from_wsp(self._workspace.parser, self._workspace.parser.groups[group])
 
         self._names: List[str] = list(self._data)
 
@@ -1088,9 +1448,53 @@ class _Groups:
     @property
     def data(self) -> Dict[str, Group]:
         """
-        Returns the group data
+        Adds a group with identifier name and containing the samples.
+            :param name: the name of the group (must be unique)
+            :param samples: the samples to add can be in sample name or sample id
         """
-        return self._data
+        if name in self._data:
+            raise ValueError(f"group name '{name}' already exists")
+
+        sample_list = []
+        for sample in samples:
+            sample_list.append(self._workspace.samples[sample])
+
+        group = Group.from_samples(self._workspace.parser, name, sample_list)
+
+        self._data[group.name] = group
+        self._names.append(group.name)
+
+    def add(self, name: str, samples: List[str]) -> None:
+        """
+        Adds a group with identifier name and containing the samples.
+            :param name: the name of the group (must be unique)
+            :param samples: the samples to add can be in sample name or sample id
+        """
+        if name in self._data:
+            raise ValueError(f"group name '{name}' already exists")
+
+        sample_list = []
+        for sample in samples:
+            sample_list.append(self._workspace.samples[sample])
+
+        group = Group.from_samples(self._workspace.parser, name, sample_list)
+
+        self._data[group.name] = group
+        self._names.append(group.name)
+
+    def remove(self, name: str) -> None:
+        """
+        Remove the specified group. Only works for user-added Groups
+            :param name: group name
+        """
+        if name not in self._data:
+            raise ValueError(f"name '{name}' doesnt point to a group")
+
+        if self._data[name]._group is not None:
+            raise ValueError(f"can only remove user-added groups, not '{name}'")
+
+        del self._data[name]
+        self._names.remove(name)
 
     def __len__(self) -> int:
         return len(self._names)
@@ -1100,7 +1504,25 @@ class _Groups:
         Returns the group
             :param group: the group to return
         """
+        if not isinstance(group, str):
+            raise KeyError(f"group index should inherit str not '{group.__class__.__name__}'")
+
         return self._data[group]
+
+    def __iter__(self):
+        self.__iter = 0
+        return self
+
+    def __next__(self):
+        keys = list(self._data.keys())
+        
+        if len(keys) <= self.__iter:
+            raise StopIteration
+        
+        key = keys[self.__iter]
+        self.__iter += 1
+        
+        return self._data[key]
 
     def __contains__(self, group: str) -> bool:
         """
@@ -1111,7 +1533,7 @@ class _Groups:
     def __repr__(self) -> str:
         output: List[str] = []
         for name in self.names:
-            output.append(f"{name} [{self.data[name].__len__()}]")
+            output.append(f"{name} [{self._data[name].__len__()}]")
 
         return "\n".join(output)
 
@@ -1128,6 +1550,8 @@ class _Cytometers:
 
         if self._workspace.parser.path:
             self._load()
+
+        self.__iter: int = None
 
     def _load(self) -> None:
         """
@@ -1166,7 +1590,25 @@ class _Cytometers:
         """
         Returns the specified cytometer
         """
+        if not isinstance(cytometer, str):
+            raise KeyError(f"cytometer index should inherit str not '{cytometer.__class__.__name__}'")
+
         return self._data[cytometer]
+
+    def __iter__(self):
+        self.__iter = 0
+        return self
+
+    def __next__(self):
+        keys = list(self._data.keys())
+        
+        if len(keys) <= self.__iter:
+            raise StopIteration
+        
+        key = keys[self.__iter]
+        self.__iter += 1
+        
+        return self._data[key]
 
     def __contains__(self, cytometer: str) -> bool:
         """
@@ -1194,6 +1636,8 @@ class _Compensation:
         
         if self._workspace.parser.path:
             self._load()
+
+        self.__iter: int = None
 
     def _load(self) -> None:
         """
@@ -1243,6 +1687,9 @@ class _Compensation:
         So will raise an error if the key would match multiple names
             :param matrix: the compensation matrix id or name
         """
+        if not isinstance(matrix, str):
+            raise KeyError(f"compensation index should inherit str not '{matrix.__class__.__name__}'")
+
         try:
             data = self._data[matrix]
         except KeyError:
@@ -1262,6 +1709,21 @@ class _Compensation:
                 break
 
         return self._data[matrix_id]
+
+    def __iter__(self):
+        self.__iter = 0
+        return self
+
+    def __next__(self):
+        keys = list(self._data.keys())
+        
+        if len(keys) <= self.__iter:
+            raise StopIteration
+        
+        key = keys[self.__iter]
+        self.__iter += 1
+        
+        return self._data[key]
 
     def __contains__(self, matrix: str) -> bool:
         """
