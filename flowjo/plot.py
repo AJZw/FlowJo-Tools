@@ -408,7 +408,7 @@ class Plotter():
                 for level in levels:
                     if level not in color_map:
                         # ignore np.nans, handled by plotnine
-                        if np.isnan(level):
+                        if pd.isnull(level):
                             pass
                         else:
                             raise ValueError(f"level '{level}' undefined in color_map")
@@ -475,7 +475,7 @@ class Plotter():
                 for level in levels:
                     if level not in fill_map:
                         # ignore np.nans, handled by plotnine
-                        if np.isnan(level):
+                        if pd.isnull(level):
                             pass
                         else:
                             raise ValueError(f"level '{level}' undefined in fill_map")
