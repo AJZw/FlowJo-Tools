@@ -525,7 +525,7 @@ class _EllipsoidGating(_AbstractGating):
         super().__init__(element)
         self.space = "channel"
 
-        self.distance: float = None
+        self.distance: float = None     # This is NOT 2x ellipse a
 
         self.dimension_x: str = None
         self.dimension_y: str = None
@@ -605,21 +605,26 @@ class _EllipsoidGating(_AbstractGating):
         if not (data.columns == self.dimension_y).any():
             raise ValueError(f"data doesnt contain a column for dimension y '{self.dimension_y}'")
 
-        def ellipse_contain(data: pd.Series) -> bool:
-            # The ellipse resolution is at most 255 which is 4x lower then the channel resolution, 
-            # therefore divide by 4
-            x = data.iloc[0] /4
-            y = data.iloc[1] /4
+        distance = np.sqrt((self.vertex_a_x - self.vertex_b_x)**2 + (self.vertex_a_y - self.vertex_b_y)**2)
+        
+        # The ellipse resolution is at most 255 which is 4x lower then the channel resolution, 
+        # therefore divide by 4
+        channel_scale = (256 / (CHANNEL_MAX+1))
+
+        def ellipse_contain(data: pd.Series, distance, channel_scale) -> bool:
+            
+            x = data.iloc[0] * channel_scale
+            y = data.iloc[1] * channel_scale
 
             distance_f_a = np.sqrt((self.foci_a_x-x)**2 + (self.foci_a_y-y)**2)
             distance_f_b = np.sqrt((self.foci_b_x-x)**2 + (self.foci_b_y-y)**2)
 
-            if distance_f_a + distance_f_b <= self.distance:
+            if distance_f_a + distance_f_b <= distance:
                 return True
             else:
                 return False
 
-        return data[[self.dimension_x, self.dimension_y]].apply(lambda x: ellipse_contain(x), axis=1)
+        return data[[self.dimension_x, self.dimension_y]].apply(lambda x: ellipse_contain(x, distance, channel_scale), axis=1)
 
     def polygon(self, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.DataFrame:
         """
@@ -637,14 +642,14 @@ class _EllipsoidGating(_AbstractGating):
         def ellips_y(a, b, rotation, t):
             return (b * np.cos(rotation) * np.sin(t)) + (a * np.cos(t) * np.sin(rotation))
 
-        a = np.sqrt((self.vertex_c_x - self.vertex_d_x)**2 + (self.vertex_c_y - self.vertex_d_y)**2) /2
-        b = np.sqrt((self.vertex_a_x - self.vertex_b_x)**2 + (self.vertex_a_y - self.vertex_b_y)**2) /2
+        a = np.sqrt((self.vertex_a_x - self.vertex_b_x)**2 + (self.vertex_a_y - self.vertex_b_y)**2) /2
+        b = np.sqrt((self.vertex_c_x - self.vertex_d_x)**2 + (self.vertex_c_y - self.vertex_d_y)**2) /2
 
         center_x = ((self.foci_b_x - self.foci_a_x) * 0.5) + self.foci_a_x
         center_y = ((self.foci_b_y - self.foci_a_y) * 0.5) + self.foci_a_y
         
         try:
-            rotation = np.tan((self.foci_b_y - center_y)/(self.foci_b_x - center_x))
+            rotation = np.arctan((self.foci_b_y - self.foci_a_y)/(self.foci_b_x - self.foci_a_x))
         except ZeroDivisionError:
             rotation = 0
         

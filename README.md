@@ -55,12 +55,12 @@ sample.gate_data()  # sample data with gate membership information (deepcopy)
 sample.count        # the amount of events in this sample
 sample.cytometer    # the cytometer this data is acquired on
 sample.compensation # this sample's compensation matrix
-sample.transforms   # the data parameter scale transformations
+sample.transforms() # the data parameter scale transformations (shallow copy)
 sample.keywords     # the FCS keywords
 sample.gates        # the sample gate structure
 
 # The measured data is not stored in the .wsp file and should be added manually
-# Make sure the export format (channel or scale) and compensation state are correct.
+# Make sure the export format (channel or scale) and compensation state are correct. (And you export with parameter names)
 sample.load_data("path/to/exported_compensated_channel_data.csv", format="channel", compensated=True)
 
 # The events contained in a (sub)gate can be retreive:
@@ -76,9 +76,10 @@ gate_node.x         # the gate's x dimension
 gate_node.y         # the gate's y dimension
 gate_node.data()    # returns the data of all cells included in the gate (deepcopy)
 gate_node.gate_data() # returns the data of all cells included in the gate with gate membership information (deepcopy)
+gate_node.transforms() # the gate_node's sample data parameter scale transformation (shallow copy)
 gate_node.count     # returns the amount of cells included in this gate
 gate_node.gates     # the subgate structure
-gate_node.polygon   # returns a polygon representation of the gate (handy for plotting)
+gate_node.polygon() # returns a polygon representation of the gate (handy for plotting)
 
 # Each group contains the following data:
 group = workspace.groups["all samples"]

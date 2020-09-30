@@ -37,8 +37,8 @@ A gate node representing the data included in the gate
 .gates      - returns a list of all direct subgates
 .count      - returns the amount of cells included in this gate
 .path       - returns the full subgate structure of the current gate node
-.transforms - returns the dictionary of parameter transforms
-.polygon    - returns a polygon representation of the gate
+.transforms() - returns the dictionary of parameter transforms (shallow copy)
+.polygon()  - returns a polygon representation of the gate
 .[]         - returns the specified subgate
 .__len__    - returns the amount of direct subgates
 .__contains__ - checks whether the specified gate exists
@@ -56,7 +56,7 @@ A class representing a single sample and all its components
 .is_compensated - whether the internal data is compensated
 .cytometer  - the cytometer this data is acquired on
 .compensation - the compensation matrix applied to this sample
-.transforms - the data parameters transformation
+.transforms() - the data parameters transformation (shallow copy)
 .keywords   - a dictionary of all fcs keywords
 .gates      - the gate data of this sample
 .count      - the amount of events in this sample's data
@@ -218,6 +218,9 @@ class Gate:
 
         data.columns = column_names
 
+        # Add sample identifyer
+        data["__sample"] = self.sample.name
+
         return data
 
     def gate_data(self, factor: Dict[str, Dict[str, str]]=None) -> pd.DataFrame:
@@ -263,22 +266,35 @@ class Gate:
 
         return sum(self._in_gate)
 
-    @property
     def transforms(self) -> Dict[str, _AbstractTransform]:
         """
-        Returns the sample's parameter transforms
+        Returns the sample's parameter transforms. Returns a shallow copy.
         """
         return self.sample.transforms
 
-    @property
     def polygon(self) -> mpl_path.Path:
         """
         Returns a polygon representation of the _gating. Useful for plotting the gate.
         """
-        transform_y = self.sample.transforms[self.y]
-        transform_x = self.sample.transforms[self.x]
+        transform_x = self.sample._transforms[self.x]
+        transform_y = self.sample._transforms[self.y]
 
-        return self._gating.polygon(transform_x, transform_y)
+        polygon = self._gating.polygon(transform_x, transform_y)
+
+        column_names = []
+        for column in polygon.columns:
+            try:
+                name = self.sample._parameter_names[column]
+            except KeyError:
+                column_names.append(column)
+            
+            if name == "":
+                column_names.append(column)
+            else:
+                column_names.append(name)
+        polygon.columns = column_names
+
+        return polygon
 
     def _apply_gates(self) -> None:
         """
@@ -521,7 +537,8 @@ class Sample:
         else:
             self.is_compensated = False
 
-        self._data = pd.read_csv(path, encoding="utf-8", error_bad_lines=True)
+        # os.path.join fixes between OS path differences
+        self._data = pd.read_csv(os.path.join(path), encoding="utf-8", error_bad_lines=True)
         self.path_data = path
 
         # Any gating expect compensated data, so apply compensation
@@ -540,9 +557,6 @@ class Sample:
                 raise ValueError(f"column '{column}' contains unexpected negative value(s). Is this really 'channel' formatted data?")
             if max(self._data[column]) > CHANNEL_MAX:
                 raise ValueError(f"column '{column}' contains unexpected >=1024 value(s). Is this really 'channel' formatted data?")
-
-        # Add sample identifyer
-        self._data["__sample"] = self.name
 
         # Calculate the gate structure / which-cells are in which-gate
         self._gates._apply_gates()
@@ -603,6 +617,9 @@ class Sample:
             # Return from a gate node -> gate node takes care of data handling
             data = self.gates[start_node].data()
 
+        # Add sample identifyer
+        data["__sample"] = self.name
+
         return data
 
     def gate_data(self, start_node: str=None, factor: Dict[str, Dict[str, str]]=None) -> pd.DataFrame:
@@ -635,7 +652,6 @@ class Sample:
     def gates(self) -> _Gates:
         return self._gates
 
-    @property
     def transforms(self) -> Dict[str, _AbstractTransform]:
         """
         Getter for the transforms data, returns the transforms data adjusted for parameter name. This return
@@ -688,7 +704,7 @@ class Sample:
             output += f"\ncompensation: {self.compensation.name}"
 
         if self._transforms:
-            output += f"\ntransforms: [{', '.join(list(self.transforms.keys()))}]"
+            output += f"\ntransforms: [{', '.join(list(self.transforms().keys()))}]"
 
         return output
 
@@ -958,7 +974,8 @@ class Group:
 
         # Set correct column and index specifyers
         data.columns = keywords
-        data.index = self._names
+        # do not use self._names, as te dictionary doesnt have a constant order
+        data.index = [self._data[sample_id].name for sample_id in self._data]
 
         return data
 
@@ -966,7 +983,7 @@ class Group:
         """
         Returns a general list of transforms. Transforms shouldnt be different between samples
         and the data is not corrected to 'fix' this. This should be fixed inside FlowJo itself. 
-        The 'Time' transform is by definition not corrected between samples. 
+        The 'Time' transform is by definition not corrected between samples. Generates a shallow copy.
         """
         transform: Dict[str, _AbstractTransform] = {}
 
