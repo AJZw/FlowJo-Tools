@@ -268,7 +268,10 @@ class Plotter():
         # relevels the data
         for column in data.columns:
             if column in self.levels:
-                data[column] = data[column].apply(lambda x: self.levels[column][x])
+                try:
+                    data[column] = data[column].apply(lambda x: self.levels[column][x])
+                except KeyError as error:
+                    raise ValueError(f"Plotter.levels specifies that column '{column}' has to be releveled. Missing key '{error.args[0]}'")
 
         if color and fill:
             plot = p9.ggplot(
@@ -1134,14 +1137,15 @@ class Plotter():
         import umap
         reducer = umap.UMAP()
         data_umap = pd.DataFrame(reducer.fit_transform(scaled_data[parameters]))
+        data_umap.index = scaled_data.index
 
         # umap output data is in identical order to input data
         data_umap.columns = ["__UMAP1", "__UMAP2"]
 
         self.data["UMAP1"] = data_umap["__UMAP1"]
         self.data["UMAP2"] = data_umap["__UMAP2"]
-        self.parameter_labels["UMAP1"] = "UMAP1"
-        self.parameter_labels["UMAP2"] = "UMAP2"
+        self.labels["UMAP1"] = "UMAP1"
+        self.labels["UMAP2"] = "UMAP2"
 
     def add_tsne(self) -> None:
         """

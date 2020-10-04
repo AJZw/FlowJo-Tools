@@ -194,10 +194,11 @@ class Gate:
 
         return gate_path
 
-    def data(self) -> pd.DataFrame:
+    def data(self, translate: bool=True) -> pd.DataFrame:
         """
         Returns the data for all events contained in this gate (this takes the entire gate structure into account)
         The data is deepcopied.
+            :param translate: whether to change the column identifiers into the column names
         """
         if self.sample._data is None:
             raise ValueError("sample does not contain any data. Make sure to load_data()")
@@ -206,29 +207,31 @@ class Gate:
         data = copy.deepcopy(self.sample._data.loc[self._in_gate])
 
         # Translate column names from identifier to names
-        column_names = []
-        for column in data.columns:
-            try:
-                name = self.sample._parameter_names[column]
-            except KeyError:
-                name = column
-            if name == "":
-                name = column
-            column_names.append(name)
+        if translate:
+            column_names = []
+            for column in data.columns:
+                try:
+                    name = self.sample._parameter_names[column]
+                except KeyError:
+                    name = column
+                if name == "":
+                    name = column
+                column_names.append(name)
 
-        data.columns = column_names
+            data.columns = column_names
 
         # Add sample identifyer
         data["__sample"] = self.sample.name
 
         return data
 
-    def gate_data(self, factor: Dict[str, Dict[str, str]]=None) -> pd.DataFrame:
+    def gate_data(self, factor: Dict[str, Dict[str, str]]=None, translate: bool=True) -> pd.DataFrame:
         """
         Getter for the data with gate annotations. Makes a deepcopy of the data
             :param factor: specifyer for factorization of gates membership. Dict[factor_column_name, Dict[gate_id, factor_level_name]]
+            :param translate: whether to change the column identifiers into the column names
         """
-        data = self.data()
+        data = self.data(translate=translate)
 
         remove = self.path + "/"
 
@@ -585,11 +588,12 @@ class Sample:
         
         self.is_compensated = True
 
-    def data(self, start_node: str=None) -> pd.DataFrame:
+    def data(self, start_node: str=None, translate: bool=True) -> pd.DataFrame:
         """
         Getter for the data. Transform the dataframe column names from the internal identifiers
         to the correct parameter names. Makes a deepcopy of the data.
             :param start_node: the gate node to retreive the data from
+            :param translate: whether to change the column identifiers into the column names
         """
         if self._data is None:
             raise ValueError("sample does not contain any data. Make sure to load_data()")
@@ -601,36 +605,38 @@ class Sample:
             data = copy.deepcopy(self._data)
 
             # Translate column names from identifier to names
-            column_names = []
-            for column in data.columns:
-                try:
-                    name = self._parameter_names[column]
-                except KeyError:
-                    name = column
-                if name == "":
-                    name = column
-                column_names.append(name)
+            if translate:
+                column_names = []
+                for column in data.columns:
+                    try:
+                        name = self._parameter_names[column]
+                    except KeyError:
+                        name = column
+                    if name == "":
+                        name = column
+                    column_names.append(name)
 
-            data.columns = column_names
-        
+                data.columns = column_names
+
         else:
             # Return from a gate node -> gate node takes care of data handling
-            data = self.gates[start_node].data()
+            data = self.gates[start_node].data(translate=translate)
 
         # Add sample identifyer
         data["__sample"] = self.name
 
         return data
 
-    def gate_data(self, start_node: str=None, factor: Dict[str, Dict[str, str]]=None) -> pd.DataFrame:
+    def gate_data(self, start_node: str=None, factor: Dict[str, Dict[str, str]]=None, translate: bool=True) -> pd.DataFrame:
         """
         Getter for the data with gate annotations. Makes a deepcopy of the data
             :param start_node: the gate node to retreive the data from
             :param factor: specifyer for factorization of gates membership. Dict[factor_column_name, Dict[gate_id, factor_level_name]]
+            :param translate: whether to change the column identifiers into the column names
         """
         if start_node is None:
             # Sample need to handle the data
-            data = self.data()
+            data = self.data(translate=translate)
             self.gates._annotate_gate(data)
 
             # factorize gate columns
@@ -644,7 +650,7 @@ class Sample:
 
         else:
             # Return from a gate node -> gate node takes care of data handling
-            data = self.gates[start_node].gate_data(factor=factor)
+            data = self.gates[start_node].gate_data(factor=factor, translate=translate)
 
         return data
 
@@ -704,7 +710,17 @@ class Sample:
             output += f"\ncompensation: {self.compensation.name}"
 
         if self._transforms:
-            output += f"\ntransforms: [{', '.join(list(self.transforms().keys()))}]"
+            transform = []
+            for column in self._data.columns:
+                try:
+                    name = self._parameter_names[column]
+                except KeyError:
+                    transform.append(column)
+                if name == "":
+                    transform.append(column)
+                else:
+                    transform.append(name)
+            output += f"\nparameters: [{', '.join(transform)}]"
 
         return output
 
@@ -929,28 +945,42 @@ class Group:
         """
         return self._names
 
-    def data(self, start_node: str=None) -> pd.DataFrame:
+    def data(self, start_node: str=None, translate: bool=True) -> pd.DataFrame:
         """
         Returns a combined DataFrame of all samples in this group.
         The returned DataFrame has a new index!
             :param start_node: the gate node to retreive the data from
+            :param translate: whether to change the column identifiers into the column names
         """
         data: List[pd.DataFrame] = []
         for sample in self._data:
-            data.append(self._data[sample].data(start_node))
-        return pd.concat(data, ignore_index=True)
+            data.append(self._data[sample].data(start_node, translate=False))
 
-    def gate_data(self, start_node: str=None, factor: Dict[str, Dict[str, str]]=None) -> pd.DataFrame:
+        data = pd.concat(data, ignore_index=True)
+
+        if translate:
+            data = self._name_parameters(data)
+
+        return data
+
+    def gate_data(self, start_node: str=None, factor: Dict[str, Dict[str, str]]=None, translate: bool=True) -> pd.DataFrame:
         """
         Returns a combined DataFrame of all samples in this group with gate annotation.
         The returned DataFrame has a new index!
             :param start_node: the gate node to retreive the data from
             :param factor: specifyer for factorization of gates membership. Dict[factor_column_name, Dict[gate_id, factor_level_name]]
+            :param translate: whether to change the column identifiers into the column names
         """
         data: List[pd.DataFrame] = []
         for sample in self._data:
-            data.append(self._data[sample].gate_data(start_node, factor))
-        return pd.concat(data, ignore_index=True)
+            data.append(self._data[sample].gate_data(start_node, factor=factor, translate=False))
+        
+        data = pd.concat(data, ignore_index=True)
+
+        if translate:
+            data = self._name_parameters(data)
+
+        return data
 
     def keywords(self, keywords: Union[str, List[str]]) -> pd.DataFrame:
         """
@@ -1021,6 +1051,48 @@ class Group:
             output[name] = transform[key]
         
         return output
+
+    def _name_parameters(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Renames the column of data from the parameter identifiers to the parameter names
+            :param data: the data to rename
+        """
+        # As some samples parameter identifiers can be named differently (or missing)
+        # handle the identifiers uniquely for group wide data exports
+        names = []
+        for sample in self._data:
+            names.append(pd.DataFrame(self._data[sample]._parameter_names, index=[sample]))
+        names = pd.concat(names)
+
+        name_dict = {}
+        warnings = []
+        for column in names.columns:
+            unique_names = names[column].unique()
+            unique_names = unique_names[unique_names != ""]
+            if len(unique_names) == 0:
+                name_dict[column] = column
+            elif len(unique_names) == 1:
+                name_dict[column] = unique_names[0]
+            else:
+                warnings.append(f"column '{column}' has multiple [{','.join(unique_names)}] names. First one is used for data()")
+                name_dict[column] = unique_names[0]
+        
+        if warnings:
+            print("\n".join(warnings))
+
+        column_names = []
+        for column in data.columns:
+            try:
+                name = name_dict[column]
+            except KeyError:
+                name = column
+            if name == "":
+                # Shouldnt happen, but leave it in just in case
+                name = column
+            column_names.append(name)
+        data.columns = column_names
+
+        return data
 
     def __len__(self) -> int:
         return len(self._data)
