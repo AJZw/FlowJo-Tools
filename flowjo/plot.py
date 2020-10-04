@@ -59,7 +59,7 @@ import os
 import io
 import copy
 
-p9.options.figure_size=(12.8, 9.6)
+p9.options.figure_size=(7.0, 7.0)
 
 def _condensor_density(column: pd.Series) -> Any:
     """
@@ -146,12 +146,17 @@ class Plotter():
         self.name: str=None
         self._data: pd.DataFrame=None
 
+        self.linewidth_border: float=4
+        self.linewidth_center: float=2
+        self.arrow_width_border: float=0.15
+        self.arrow_width_center: float=0.13
         self.color_na: str="#E3256B"
         self.color_map: str="magma"
         self.fill_na: str="#E3256B"
         self.fill_map: str="magma"
         self.is_channel: bool=True
         self.scale_lim: Tuple[int,int]=[0, 1023]
+
         self.scales: Dict[str, _Scale]={
             "FSC-A":Linear(start=0, end=262144),
             "FSC-W":Linear(start=0, end=262144),
@@ -161,14 +166,32 @@ class Plotter():
             "SSC-H":Linear(start=0, end=262144),
             "Time":Linear(start=0, end=262144)
         }
+        self.labels: Dict[str, str] = {
+            "__sample":"sample"
+        }
+        self.levels: Dict[str, Dict[str,str]] = {}
+        self.metadata: Dict[str, Any] = {}
 
         if isinstance(data, _Abstract):
             self.name = os.path.basename(data.path)
             self._data = data.data
             self._check_scale()
+            # Add default labels
+            for column in self._data.columns:
+                if column in self.labels:
+                    pass
+                else:
+                    self.labels[column] = column
+    
         elif isinstance(data, pd.DataFrame):
             self._data = data
             self._check_scale()
+            for column in self._data.columns:
+                if column in self.labels:
+                    pass
+                else:
+                    self.labels[column] = column
+
         else:
             raise ValueError("plot must be instantiate with a pd.DataFrame or flowjo.data._Abstract class")
     
@@ -211,7 +234,7 @@ class Plotter():
     def _plot_base(self, data: pd.Dataframe, x: str, y: str, color: str=None, fill: str=None) -> p9.ggplot:
         """
         Creates the data base for all plots
-            :param data: the data table with all necessary plotting information
+            :param data: the data table with all necessary plotting information. Assumes this is a deepcopy!
             :param x: the x-axis parameter
             :param y: the y-axis parameter
             :param color: for solid object the fill, for non-solid object the outline parameter
@@ -219,6 +242,9 @@ class Plotter():
             :returns: the plot data base
             :raises ValueError: if parameters could not be found in .data
         """
+        if id(data) == id(self.data):
+            raise ValueError("make sure to call _plot_base with a deepcopy of data")
+
         if not (data.columns == x).any():
             raise ValueError(f"x '{x}' does not specify columns in .data")
 
@@ -239,6 +265,11 @@ class Plotter():
             if not (data.columns == fill).any():
                 raise ValueError(f"fill '{fill}' does not specify columns in .data")
         
+        # relevels the data
+        for column in data.columns:
+            if column in self.levels:
+                data[column] = data[column].apply(lambda x: self.levels[column][x])
+
         if color and fill:
             plot = p9.ggplot(
                 data,
@@ -298,6 +329,10 @@ class Plotter():
     def _plot_labels(self, plot: p9.ggplot, title: str=None, x: str=None, y: str=None) -> p9.ggplot:
         """
         Adds labels to the plot
+            :param plot: the plot to add the labels to
+            :param title: (optional) overwrite the standard title
+            :param x: (optional) overwrite the standard x label
+            :param y: (optional) overwrite the standard y label
         """
         if title:
             plot = plot + p9.ggtitle(
@@ -309,9 +344,9 @@ class Plotter():
             )
 
         if x is None:
-            x = plot.mapping["x"]
+            x = self.labels[plot.mapping["x"]]
         if y is None:
-            y = plot.mapping["y"]
+            y = self.labels[plot.mapping["y"]]
 
         plot = plot + p9.labs(
             x=x, 
@@ -429,6 +464,8 @@ class Plotter():
         else:
             raise ValueError(f"unimplemented colorscale dtype {plot.data[color].dtype}")
 
+        plot = plot + p9.labs(color=self.labels[color])
+
         return plot
     
     def _plot_fillscale(self, plot: p9.ggplot, fill_map: Dict[str, str]=None, rescale: bool=False) -> p9.ggplot:
@@ -496,9 +533,89 @@ class Plotter():
         else:
             raise ValueError(f"unimplemented fillscale dtype {plot.data[fill].dtype}")
 
+        plot = plot + p9.labs(fill=self.labels[fill])
+
+        return plot
+
+    def _plot_pca_loadings(self, plot: p9.ggplot, labels: bool=True):
+        """
+        Adds pca loadings to the plot
+            :param plot: the plot to add the vectors to
+            :param labels: whether to add labels to the vector
+        """
+        x = plot.mapping["x"]
+        y = plot.mapping["y"]
+
+        if "__pca_loadings" not in self.metadata:
+            raise ValueError("please run .add_pca first. No loadings to add to the plot")
+
+        data = copy.deepcopy(self.metadata["__pca_loadings"][[x, y]])
+        data["__x"] = 0.0
+        data["__y"] = 0.0
+
+        # Scale loadings to make them fit nicely in the plot
+        x_scaler = min(abs(min(plot.data[x])), abs(max(plot.data[x])))
+        y_scaler = min(abs(min(plot.data[y])), abs(max(plot.data[y])))
+        
+        data[x] *= x_scaler * 1.5
+        data[y] *= y_scaler * 1.5
+
+        # Plot two lines, one for border color, one for fill color
+        plot = plot + p9.geom_segment(
+            mapping=p9.aes(x="__x", xend=x, y="__y", yend=y),
+            data=data,
+            color="#000000",
+            size=self.linewidth_border,
+            lineend="round",
+            inherit_aes=False,
+            arrow=p9.geoms.arrow(length=self.arrow_width_border, type="open")
+        )
+        plot = plot + p9.geom_segment(
+            mapping=p9.aes(x="__x", xend=x, y="__y", yend=y),
+            data=data,
+            color="#FFFFFF",
+            size=self.linewidth_center,
+            lineend="round",
+            inherit_aes=False,
+            arrow=p9.geoms.arrow(length=self.arrow_width_center, type="open")
+        )
+        # Add labels
+        if labels:
+            # Only offsets
+            data["__x_label"] = data[x] * 1.2
+            data["__y_label"] = data[y] * 1.2
+            data["__label"] = [self.labels[x] for x in data.index]
+
+            plot = plot + p9.geom_text(
+                mapping=p9.aes(label="__label", x="__x_label", y="__y_label"),
+                data=data,
+                inherit_aes=False,
+                color="#000000",
+                va="center",
+                ha="center",
+                fontweight="bold"
+            )
+
         return plot
 
     ## plot implementations
+
+    def scatter_pca(self, x: str, y: str, c: str, c_map: dict=None, loadings: bool=True, labels: bool=True) -> p9.ggplot:
+        """
+        Convenience wrapper around scatter plot for the plotting of pca plots. Make sure you have ran add_pca() first.
+            :param x: the x dimension
+            :param y: the y dimension
+            :param c: the c dimension - used for color mapping
+            :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
+            :param loadings: whether to plot the loadings
+            :param labels: whether to plot the loading labels
+        """
+        plot = self.scatter(x, y, c, c_map)
+
+        if loadings:
+            plot = self._plot_pca_loadings(plot, labels)
+
+        return plot
 
     def scatter(self, x: str, y: str, c: str, c_map: dict=None) -> p9.ggplot:
         """
@@ -508,9 +625,14 @@ class Plotter():
             :param c: the c dimension - used for color mapping
             :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
         """
-        plot = self._plot_base(self.data, x, y, color=c)
+        data = copy.deepcopy(self.data[[x, y, c]])
+
+        # Randomize data order
+        data = data.sample(frac=1)
+
+        plot = self._plot_base(data, x, y, color=c)
         plot = self._plot_theme(plot)
-        plot = self._plot_labels(plot, title=self.name, x=x, y=y)
+        plot = self._plot_labels(plot, title=self.name)
         plot = self._plot_scale(plot, xlim=self.scale_lim, ylim=self.scale_lim)
         plot = self._plot_colorscale(plot, rescale=True, color_map=c_map)
         plot = plot + p9.geom_point(na_rm="False")
@@ -549,8 +671,8 @@ class Plotter():
 
         # calculate new limits
         limits = copy.deepcopy(self.scale_lim)
-        limits[0] = limits[0] // bin_size
-        limits[1] = limits[1] // bin_size
+        limits[0] = limits[0] / bin_size
+        limits[1] = limits[1] / bin_size
 
         # build title
         if self.name:
@@ -561,7 +683,7 @@ class Plotter():
         # Build the plot
         plot = self._plot_base(data, x, y, fill=c)
         plot = self._plot_theme(plot)
-        plot = self._plot_labels(plot, title=title, x=x, y=y)
+        plot = self._plot_labels(plot, title=title)
         plot = self._plot_scale(plot, xlim=limits, ylim=limits)
         plot = self._plot_fillscale(plot, rescale=True, fill_map=c_map)
         plot = plot + p9.geom_rect(
@@ -643,7 +765,7 @@ class Plotter():
         for i, frame in enumerate(z_stack):
             plot = self._plot_base(frame, x, y, fill=c)
             plot = self._plot_theme(plot)
-            plot = self._plot_labels(plot, title=title, x=x, y=y)
+            plot = self._plot_labels(plot, title=title)
             plot = self._plot_scale(plot, xlim=limits, ylim=limits)
             # force equal colorscale between frames by custom setting of limits
             plot = plot + p9.scales.scale_fill_cmap(
@@ -732,7 +854,7 @@ class Plotter():
         elif not c:
             c = "__c"
             data["__c"] = data[x]
-            cmap = "nipi_spectral"
+            cmap = "nipy_spectral"
         else:
             cmap = "viridis"
 
@@ -808,7 +930,7 @@ class Plotter():
             axes.set_xticks(ticks=major_ticks[unique], minor=False)
             axes.set_xticklabels(labels=labels[unique])
             axes.set_xticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
-        axes.set_xlabel(x)
+        axes.set_xlabel(self.labels[x])
         
         # Somehow y <-> z axis are swapped, correct for this
         try:
@@ -822,7 +944,7 @@ class Plotter():
             axes.set_zticks(ticks=major_ticks[unique], minor=False)
             axes.set_zticklabels(labels=labels[unique])
             axes.set_zticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
-        axes.set_zlabel(y)
+        axes.set_zlabel(self.labels[y])
         
         try:
             axis_scale = self.scales[z]
@@ -835,7 +957,7 @@ class Plotter():
             axes.set_yticks(ticks=major_ticks[unique], minor=False)
             axes.set_yticklabels(labels=labels[unique])
             axes.set_yticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
-        axes.set_ylabel(z)
+        axes.set_ylabel(self.labels[z])
 
         # theming
         if self.name:
@@ -859,8 +981,7 @@ class Plotter():
             :param factor: resolution rescale factor
             :returns: reduced pd.DataFrame
         """
-        if factor == 1:
-            return data
+        # Even run if factor == 1, non-integer input data needs to be 'integerized' for proper binning
 
         if factor == 0:
             raise ValueError("cannot divide by zero")
@@ -971,28 +1092,56 @@ class Plotter():
         """
         self._data = self._bin(self.data, x=x, y=y, z=z, condensor=condensor)
 
-    def add_umap(self, parameters: List[str]) -> None:
+    def add_umap(self, parameters: List[str], q: Tuple[float, float]=(0.05, 0.95)) -> None:
         """
         Calculates the Uniform Manifold Approximation and Projection (UMAP) axis
         Adds the value of each datapoint under the column names "UMAP1" and "UMAP2"
             :param parameters: the parameters to use for umap calculation
+            :param q: the quantile range to use for centering and scaling of the data (q_min, q_max)
         """
         for param in parameters:
             if not (param == self.data.columns).any():
                 raise ValueError(f"parameter '{param}' does not specify a column in .data")
 
-        import umap
-        import sklearn.preprocessing
+        # Scale data using quantiles to limit influence of outliers and to account for
+        # a mixed gaussian distribution of the sample data
 
+        # Scale data per sample
+        data_samples = [y for x, y in self.data.groupby("__sample")]
+
+        plots = []
+        for sample in data_samples:
+            # Standard/RobustScaler - they centralize based on mean/median. In flowcytometry data
+            # we cannot assume that the distributions (generalize as a mix of two gaussians) shows equal/between sample
+            # comparable sizes of the two guassians components. 
+            # Secondly the data can have a lot of outliers, so scaling based on quantile will be more robust.
+            # The mean of the quantiles will likely give a distribution agnostic centralisation.
+            # Other option would be the geoMean, but that is quite influenced by the outliers
+
+            # scale
+            quantiles = sample[parameters].quantile(q=q)
+            
+            sample[parameters] = (sample[parameters] - quantiles.loc[q[0]]) / (quantiles.loc[q[1]] - quantiles.loc[q[0]])
+
+            # Center
+            quantiles = sample[parameters].quantile(q=q)
+            q_mean = quantiles.mean()
+            
+            sample[parameters] = sample[parameters] - q_mean
+
+        scaled_data = pd.concat(data_samples)
+
+        import umap
         reducer = umap.UMAP()
-        
-        scaled_data = sklearn.preprocessing.StandardScaler().fit_transform(self.data[parameters])
-        data_umap = pd.DataFrame(reducer.fit_transform(scaled_data))
+        data_umap = pd.DataFrame(reducer.fit_transform(scaled_data[parameters]))
+
         # umap output data is in identical order to input data
         data_umap.columns = ["__UMAP1", "__UMAP2"]
 
         self.data["UMAP1"] = data_umap["__UMAP1"]
         self.data["UMAP2"] = data_umap["__UMAP2"]
+        self.parameter_labels["UMAP1"] = "UMAP1"
+        self.parameter_labels["UMAP2"] = "UMAP2"
 
     def add_tsne(self) -> None:
         """
@@ -1001,12 +1150,63 @@ class Plotter():
         """
         raise NotImplementedError("tSNE has yet to be implemented")
 
-    def add_pca(self):
+    def add_pca(self, parameters: List[str], q: Tuple[float, float]=(0.05, 0.95)):
         """
         Calculates the Principle Componet axis
         Adds the value of each datapoint loading under the column names "PCn" (replace n with number of PC)
+            :param parameters: the parameters to use for umap calculation
+            :param q: the quantile range to use for centering and scaling of the data (q_min, q_max)
         """
-        raise NotImplementedError("PCA has yet to be implemented")
+        for param in parameters:
+            if not (param == self.data.columns).any():
+                raise ValueError(f"parameter '{param}' does not specify a column in .data")
+
+        # Scale data using quantiles to limit influence of outliers and to account for
+        # a mixed gaussian distribution of the sample data
+
+        # Scale data per sample
+        data_samples = [y for x, y in self.data.groupby("__sample")]
+
+        plots = []
+        for sample in data_samples:
+            # Standard/RobustScaler - they centralize based on mean/median. In flowcytometry data
+            # we cannot assume that the distributions (generalize as a mix of two gaussians) shows equal/between sample
+            # comparable sizes of the two guassians components. 
+            # Secondly the data can have a lot of outliers, so scaling based on quantile will be more robust.
+            # The mean of the quantiles will likely give a distribution agnostic centralisation.
+            # Other option would be the geoMean, but that is quite influenced by the outliers
+
+            # scale
+            quantiles = sample[parameters].quantile(q=q)
+            
+            sample[parameters] = (sample[parameters] - quantiles.loc[q[0]]) / (quantiles.loc[q[1]] - quantiles.loc[q[0]])
+
+            # Center
+            quantiles = sample[parameters].quantile(q=q)
+            q_mean = quantiles.mean()
+            
+            sample[parameters] = sample[parameters] - q_mean
+
+        scaled_data = pd.concat(data_samples)
+
+        import sklearn
+        n_components = 4# len(parameters)
+        pca = sklearn.decomposition.PCA(n_components=n_components)
+        pca.fit(scaled_data[parameters])
+
+        # Calculate transformation for sample plotting
+        pca_data = pd.DataFrame(pca.transform(scaled_data[parameters]))
+        pca_data.index = self.data.index
+        pca_data.columns = [f"PC{i+1}" for i in range(0, n_components)]
+
+        self._data[pca_data.columns] = pca_data
+        self.labels.update({f"PC{i+1}":f"PC{i+1}: {round(x*100,2)}%" for i, x in enumerate(pca.explained_variance_)})
+
+        # Store the components for vector plotting
+        pca_vector = pd.DataFrame(pca.components_)
+        pca_vector.index = [f"PC{i+1}" for i in range(0, n_components)]
+        pca_vector.columns = parameters
+        self.metadata["__pca_loadings"] = pca_vector.T
 
     ## saving
 

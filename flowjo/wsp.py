@@ -84,7 +84,7 @@ A class representing a group of samples
 .__contains__ - whether the group contains the specified sample (first lookup by id, then by name)
 
 :class: Cytometer
-A class representing a cytometer
+A class representing a cytometer. Compensation and transforms belong together to a matrix identifier.
 .id         - the unique id of the cytometer (identical to .name)
 .name       - the name of the cytometer
 .compensation - all compensation matrixes defined in the fcs-files for this cytometer ('Acquisition-defined')
@@ -848,7 +848,7 @@ class Group:
         self.__iter: int = None
 
     @classmethod
-    def from_wsp(cls, parser: _Parser, group_data: _Group):
+    def from_wsp(cls, parser: _Parser, group_data: _Group, samples: _Samples):
         """
         Instantiates a Group from a workspace parser
             :param parser: the workspace parser to link identifiers to sample data
@@ -860,7 +860,7 @@ class Group:
         cls.gates = cls._group.name
 
         for sample_id in cls._group.samples:
-            cls._data[sample_id] = Sample(cls._parser, cls._parser.samples[sample_id])
+            cls._data[sample_id] = samples[sample_id]
 
         for sample_id in cls._data:
             cls._names.append(cls._data[sample_id].name)
@@ -1155,13 +1155,16 @@ class Cytometer:
 
         self.name: str = self._cytometer.cyt
         
-        self.compensation: List[MTX] = []
+        self.compensation: Dict[str, MTX] = {}
         for matrix_id in self._cytometer.transforms:
-            self.compensation.append(self._parser.matrices[matrix_id])
+            try:
+                self.compensation[matrix_id] = self._parser.matrices[matrix_id]
+            except KeyError:
+                self.compensation[matrix_id] = None
         
-        self.transforms: List[Dict[str, AbstractTransform]] = []
+        self.transforms: Dict[Dict[str, AbstractTransform]] = {}
         for matrix_id in self._cytometer.transforms:
-            self.transforms.append(self._cytometer.transforms[matrix_id])
+            self.transforms[matrix_id] = self._cytometer.transforms[matrix_id]
 
     @property
     def id(self) -> str:
@@ -1437,7 +1440,7 @@ class _Groups:
         Loads the data from parser into the representation
         """
         for group in self._workspace.parser.groups:
-            self._data[group] = Group.from_wsp(self._workspace.parser, self._workspace.parser.groups[group])
+            self._data[group] = Group.from_wsp(self._workspace.parser, self._workspace.parser.groups[group], self._workspace.samples)
 
         self._names: List[str] = list(self._data)
 

@@ -17,6 +17,7 @@ Python >= 3.8.1
 pandas >= 1.1.1  
 lxml >= 4.5.2 (for matrix & wsp module)  
 plotnine >= 0.7.1 (for plot module)  
+scikit-learn >= 0.23.2 (for plot module Plotter.add_pca())  
 umap-learn >=0.4.6 (for plot module Plotter.add_umap())
 
 ## Installation
@@ -186,6 +187,9 @@ files = os.listdir(path)
 # Construct the 'combined' matrix
 combined = MTX(os.path.join(path, files[0]))
 combined.name = "combined"
+# Add transform identifyer; if transform is already known the mtx will be rejected by FlowJo
+combined.id = "9999aaaa-aaaa-aaaa-aaaa-aaaaaaaa9999"
+
 
 # Add the remaining single stain matrixes
 for single in files[1:]:
@@ -202,7 +206,8 @@ v1.1 - Implemented the basic plotting functionalities
 v1.2 - Implemented scatter_3d and convenience saving functions  
 v1.3 - Implemented show_3d  
 v1.4 - Implemented FlowJo wsp parser  
-v1.5 - Implemented factorized gate membership export
+v1.5 - Implemented factorized gate membership export  
+v1.6 - Implemented PCA dimensional reduction
 
 ## License
 
