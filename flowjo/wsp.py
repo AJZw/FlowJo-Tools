@@ -242,9 +242,19 @@ class Gate:
         if factor is not None:
             #redundant = []
             for factor_name in factor:
-                data[factor_name] = np.nan
-
                 factor_levels = factor[factor_name]
+
+                # Check if all factor_levels are available if not, generate warning
+                if sum(data.columns.isin(factor_levels)) != len(factor_levels):
+                    missing_levels = []
+                    for factor_level in factor_levels:
+                        if factor_level not in data.columns:
+                            missing_levels.append(factor_level)
+
+                    print(f"couldnt factorize '{factor_name}' missing levels {missing_levels}")
+                    continue
+
+                data[factor_name] = np.nan
                 for factor_level in factor_levels:
                     data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
 
@@ -642,9 +652,19 @@ class Sample:
             # factorize gate columns
             if factor is not None:
                 for factor_name in factor:
-                    data[factor_name] = np.nan
-
                     factor_levels = factor[factor_name]
+                    
+                    # Check if all factor_levels are available if not, generate warning
+                    if sum(data.columns.isin(factor_levels)) != len(factor_levels):
+                        missing_levels = []
+                        for factor_level in factor_levels:
+                            if factor_level not in data.columns:
+                                missing_levels.append(factor_level)
+
+                        print(f"couldnt factorize '{factor_name}' missing levels {missing_levels}")
+                        continue
+
+                    data[factor_name] = np.nan
                     for factor_level in factor_levels:
                         data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
 
@@ -711,22 +731,37 @@ class Sample:
 
         if self._transforms:
             transform = []
-            for column in self._data.columns:
-                try:
-                    name = self._parameter_names[column]
-                except KeyError:
-                    transform.append(column)
-                if name == "":
-                    transform.append(column)
-                else:
-                    transform.append(name)
+            if self._data is not None:
+                for column in self._data.columns:
+                    try:
+                        name = self._parameter_names[column]
+                    except KeyError:
+                        transform.append(column)
+                    if name == "":
+                        transform.append(column)
+                    else:
+                        transform.append(name)
+            else:
+                # Fallback for when no data is loaded
+                # Does show the name for both the uncompensated data and compensated data
+                for key in self._transforms:
+                    try:
+                        name = self._parameter_names[key]
+                    except KeyError:
+                        transform.append(key)
+                    if name == "":
+                        transform.append(key)
+                    else:
+                        transform.append(name)
             output += f"\nparameters: [{', '.join(transform)}]"
 
         return output
 
-    def subsample(self, n: int) -> None:
+    def subsample(self, n: int, seed:int=None) -> None:
         """
         Subsamples the dataset to the specified amount of cells
+            :param n: amount of events to subsample to.
+            :param seed: the seed used for sampling
         """
         if self._data is None:
             raise ValueError("No data has been loaded. Make sure to call load_data() first")
@@ -735,7 +770,7 @@ class Sample:
         if len(self._data.index) <= n:
             return
 
-        self._data = self._data.sample(n, replace=False)
+        self._data = self._data.sample(n, replace=False, random_state=seed)
 
         # because the indexes are still valid, no need to reapply gates
         # self._apply_gates()
@@ -1201,17 +1236,18 @@ class Group:
         if warnings:
             print("\n".join(warnings))
 
-    def subsample(self, n: int=None) -> None:
+    def subsample(self, n: int=None, seed: int=None) -> None:
         """
-        Subsamples all samples in this group to the specified n. If no n is given, subsamples
-        to the lowest sample.count
+        Subsamples all samples in this group to the specified n. 
+            :param n: the amount of cells to subsample to. If no n is given, subsamples to the lowest sample.count
+            :param seed: the seed used for sampling
         """
         if n is None:
             counts = [self._data[x].count for x in self._data]
             n = min(counts)
         
         for sample_id in self._data:
-            self._data[sample_id].subsample(n=n)
+            self._data[sample_id].subsample(n=n, seed=seed)
 
 class Cytometer:
     """

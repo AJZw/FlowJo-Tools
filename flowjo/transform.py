@@ -86,17 +86,17 @@ class _Abstract():
 
     def labels(self, start: int=0, end: int=1023) -> List[str]:
         """
-        Returns the label ticks location and tick label in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
+        Returns the labels for the major ticks (for coordinates use major_ticks())
+            :param start: minimum value in plot coordinates
+            :param end: maximum value in plot coordinates
         """
         return self._labels
  
     def major_ticks(self, start: int=0, end: int=1023) -> List[float]:
         """
-        Returns the major tick location in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
+        Returns the major tick locations
+            :param start: minimum value in plot coordinates
+            :param end: maximum value in plot coordinates
         """
         ticks = copy.deepcopy(self._major_ticks)
 
@@ -106,9 +106,9 @@ class _Abstract():
     
     def minor_ticks(self, start: int=0, end: int=1023) -> List[float]:
         """
-        Returns the minor tick location in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
+        Returns the minor tick locations
+            :param start: minimum value in plot coordinates
+            :param end: maximum value in plot coordinates
         """
         ticks = copy.deepcopy(self._minor_ticks)
 
@@ -267,7 +267,7 @@ class Log(_Abstract):
     def _repr__(self) -> str:
         return f"(LogTransform:{self.start}-{self.end})"
 
-class Biex(_Abstract):
+class Biex(_Abstract): 
     """
     Represents a biexponential scale between the start and end value.
     Different from the others this scale generates a look-up table. This is faster for big matrix transforms. 
@@ -344,9 +344,9 @@ class Biex(_Abstract):
             index = bisect.bisect_right(self.lookup, data[i])
 
             if not index:
-                value = start-1
+                value = start-1.0
             elif index == len(self.lookup):
-                value = end+1
+                value = end+1.0
             else:
                 value = self.values[index]
 
@@ -356,12 +356,14 @@ class Biex(_Abstract):
 
     def labels(self, start: int=0, end: int=1023) -> Tuple[List[float], List[str]]:
         """
-        Returns the label ticks location and tick label in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
+        Returns the labels for the major ticks (for coordinates use major_ticks())
+            :param start: minimum value in plot coordinates
+            :param end: maximum value in plot coordinates
         """
         labels = copy.deepcopy(self._labels)
 
+        # To know which labels to return, we need to know which major ticks are within the plot coordinate space
+        # We need to cleanup labels as we are working with a lookup table, so values outside the lookup range are invalid
         labels_x = copy.deepcopy(self._major_ticks)
         labels_x = self.scaler(labels_x, start, end)
 
@@ -376,35 +378,49 @@ class Biex(_Abstract):
         for i in range(len(labels_x), 0, -1):
             if labels_x[i-1] is None:
                 labels.pop(i-1)
+            elif labels_x[i-1] == start-1.0:
+                labels.pop(i-1)
+            elif labels_x[i-1] == end+1.0:
+                labels.pop(i-1)
 
         return labels
 
     def major_ticks(self, start: int=0, end: int=1023) -> List[float]:
         """
-        Returns the major tick location in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
+        Returns the major tick locations
+            :param start: minimum value in plot coordinates
+            :param end: maximum value in plot coordinates
         """
         ticks = super().major_ticks(start, end)
 
-        # cleanup unfound labels
+        # cleanup unfound ticks
+        # We need to cleanup ticks as we are working with a lookup table, so values outside the lookup range are invalid
         for i in range(len(ticks), 0, -1):
             if ticks[i-1] is None:
+                ticks.pop(i-1)
+            elif ticks[i-1] == start-1.0:
+                ticks.pop(i-1)
+            elif ticks[i-1] == end+1.0:
                 ticks.pop(i-1)
 
         return ticks
     
     def minor_ticks(self, start: int=0, end: int=1023) -> List[float]:
         """
-        Returns the minor tick location in plot x-coordinate
-            :param start: plot minimum xlim
-            :param end: plot maximum xlim
+        Returns the minor tick locations
+            :param start: minimum value in plot coordinates
+            :param end: maximum value in plot coordinates
         """
         ticks = super().minor_ticks(start, end)
 
-        # cleanup unfound labels
+        # cleanup unfound ticks
+        # We need to cleanup ticks as we are working with a lookup table, so values outside the lookup range are invalid
         for i in range(len(ticks), 0, -1):
             if ticks[i-1] is None:
+                ticks.pop(i-1)
+            elif ticks[i-1] == start-1.0:
+                ticks.pop(i-1)
+            elif ticks[i-1] == end+1.0:
                 ticks.pop(i-1)
 
         return ticks
@@ -421,7 +437,10 @@ class Biex(_Abstract):
         decades = self.pos_decade
         width = np.log10(-self.width)   # log10 transform to make the data 'equivalent' to decades and extra
         extra = self.neg_decade
-        channel_range = end - start
+        channel_range = int(end - start)
+        
+        if channel_range < 1:
+            raise ValueError(f"cannot build lookup table with local space range {start}-{end}")
 
         # Make sure width is within expected values
         if width < 0.5 or width > 3.0:

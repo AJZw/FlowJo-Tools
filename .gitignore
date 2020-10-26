@@ -41,4 +41,7 @@ __pycache__/
 examples/
 main.py
 main2.py
+main3.py
+paper_figures.py
+wsp_matrix_combine.py
 umap_scaling.py
