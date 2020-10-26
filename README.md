@@ -207,7 +207,8 @@ v1.2 - Implemented scatter_3d and convenience saving functions
 v1.3 - Implemented show_3d  
 v1.4 - Implemented FlowJo wsp parser  
 v1.5 - Implemented factorized gate membership export  
-v1.6 - Implemented PCA dimensional reduction
+v1.6 - Implemented PCA dimensional reduction  
+v1.7 - Implemented Correlation line graph
 
 ## License
 
