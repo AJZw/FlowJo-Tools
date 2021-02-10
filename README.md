@@ -13,7 +13,7 @@ AJ Zwijnenburg
 
 ## Requirements
 
-Python >= 3.8.1  
+python >= 3.8.1  
 pandas >= 1.1.1  
 lxml >= 4.5.2 (for matrix & wsp module)  
 plotnine >= 0.7.1 (for plot module)  
@@ -66,7 +66,7 @@ sample.load_data("path/to/exported_compensated_channel_data.csv", format="channe
 
 # The events contained in a (sub)gate can be retreive:
 gate_node = samples.gates["gate_name"]
-gate_node = samples.gates["or/chain/multiple/gates/using/backslashes"]
+gate_node = samples.gates["or/chain/multiple/gates/using/forward_slashes"]
 
 # Each gate node also contains many useful attributes
 gate_node.id        # the gate's unique identifier
@@ -86,14 +86,14 @@ gate_node.polygon() # returns a polygon representation of the gate (handy for pl
 group = workspace.groups["all samples"]
 group.id            # the group unique identifier (identical to .name)
 group.name          # the group name
-group.ids           # A list of the identifiers of all samples contained in this group
-group.names         # A list of the names of all samples contained in this group
-group.gates         # The group gate structure, this doesnt have to be identical to the sample gate structure!
-group.data()        # Concatenated sample data (deepcopy)
-group.gate_data()   # Concatenated sample data with gate membership information (deepcopy)
-group.keywords("$CYT") # The keyword(s) data of all samples in the group
-group.transforms()  # The transforms used on the samples in the group
-group["sample id/name"] # Retreive a specific sample contained in the group
+group.ids           # a list of the identifiers of all samples contained in this group
+group.names         # a list of the names of all samples contained in this group
+group.gates         # the group gate structure, this doesnt have to be identical to the sample gate structure!
+group.data()        # concatenated sample data (deepcopy)
+group.gate_data()   # concatenated sample data with gate membership information (deepcopy)
+group.keywords("$CYT") # the keyword(s) data of all samples in the group
+group.transforms()  # the transforms used on the samples in the group
+group["sample id/name"] # retreive a specific sample contained in the group
 
 # Each cytometer contains the following data:
 cyto = workspace.cytometers["cytometer id/name"]
@@ -128,7 +128,9 @@ factor = {"factor_name":{
 data = group.gate_data(factor=factor)
 
 # The exported data can be plotted with correct scales as follows:
+# First assign the data to a plotter
 plot = Plotter(data)
+# The scaling has to be set manually; here the scales are updated from the wsp information
 plot.scale.update(group.transforms())
 plot.scatter("x", "y", "color")
 ```
@@ -138,6 +140,7 @@ FlowJo data export with gata annotation example:
 ```python
 # This is an example of the python code to run
 # For the export instructions see the flowjo/data.py file
+# It's a lot less work to use the flowjo.wsp interface
 
 from flowjo.data import CSVGated
 
@@ -187,9 +190,8 @@ files = os.listdir(path)
 # Construct the 'combined' matrix
 combined = MTX(os.path.join(path, files[0]))
 combined.name = "combined"
-# Add transform identifyer; if transform is already known the mtx will be rejected by FlowJo
+# Add transform identifyer; if transform is already known, the mtx will be (silently) rejected by FlowJo
 combined.id = "9999aaaa-aaaa-aaaa-aaaa-aaaaaaaa9999"
-
 
 # Add the remaining single stain matrixes
 for single in files[1:]:
@@ -208,7 +210,8 @@ v1.3 - Implemented show_3d
 v1.4 - Implemented FlowJo wsp parser  
 v1.5 - Implemented factorized gate membership export  
 v1.6 - Implemented PCA dimensional reduction  
-v1.7 - Implemented Correlation line graph
+v1.7 - Implemented Correlation line graph  
+v1.8 - Implemented range gates
 
 ## License
 

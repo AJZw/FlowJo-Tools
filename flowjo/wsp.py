@@ -290,7 +290,10 @@ class Gate:
         Returns a polygon representation of the _gating. Useful for plotting the gate.
         """
         transform_x = self.sample._transforms[self.x]
-        transform_y = self.sample._transforms[self.y]
+        if self.y:
+            transform_y = self.sample._transforms[self.y]
+        else:
+            transform_y = None
 
         polygon = self._gating.polygon(transform_x, transform_y)
 
@@ -315,7 +318,11 @@ class Gate:
         """
         # For the gate be to applied properly the gate might need to be transformed to the correct dimensions
         transform_x = self.sample._transforms[self.x]
-        transform_y = self.sample._transforms[self.y]
+        # One-dimensional plots (like histograms), do not have a y-transform
+        if self.y:
+            transform_y = self.sample._transforms[self.y]
+        else:
+            transform_y = None
 
         in_gating = self._gating.contains(self.sample._data, transform_x, transform_y)
 

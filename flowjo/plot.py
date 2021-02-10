@@ -41,7 +41,7 @@ Condensor function for Plot._bin(). Returns the min value for numeric data or th
 
 :class: Plotter
 The main plotting class. Provides an interface for the convenient plotting of scatter and rasterized plots.
-Rasterization is slow as proper statistics can be calculated per bin
+Rasterization is slow as proper statistics are be calculated per bin
 
 """
 
@@ -391,18 +391,18 @@ class Plotter():
             plot_title=p9.element_text(ha="center", weight="bold", size=14),
             axis_text_x=p9.element_text(ha="center", va="top", color="#000000", weight="bold"),
             axis_text_y=p9.element_text(ha="right", va="center", color="#000000", weight="bold"),
-            axis_ticks_major_x=p9.element_line(color="#FFFFFFFF", size=1.5),
+            axis_ticks_major_x=p9.element_line(color="#ffffffff", size=1.5),
             axis_ticks_length_major=4.0,
             axis_ticks_length_minor=2.5,
-            axis_ticks_major_y=p9.element_line(color="#FFFFFFFF", size=1.5),
-            axis_ticks_minor_x=p9.element_line(color="#FFFFFFFF", size=1.5),
-            axis_ticks_minor_y=p9.element_line(color="#FFFFFFFF", size=1.5),
+            axis_ticks_major_y=p9.element_line(color="#ffffffff", size=1.5),
+            axis_ticks_minor_x=p9.element_line(color="#ffffffff", size=1.5),
+            axis_ticks_minor_y=p9.element_line(color="#ffffffff", size=1.5),
             panel_grid_major_x=p9.element_blank(),
             panel_grid_major_y=p9.element_blank(),
             panel_grid_minor_x=p9.element_blank(),
             panel_grid_minor_y=p9.element_blank(),
-            panel_background=p9.element_rect(fill="#FFFFFFFF", color="#FFFFFFFF"),
-            panel_border=p9.element_rect(fill=None, color="#000000FF", size=1.5),
+            panel_background=p9.element_rect(fill="#eeeeeeff", color="#eeeeeeff"),
+            panel_border=p9.element_rect(fill=None, color="#000000ff", size=1.5),
             legend_title=p9.element_text(ha="left"),
             legend_key=p9.element_blank(),
             legend_key_width=8,
@@ -724,7 +724,7 @@ class Plotter():
         plot = self._plot_labels(plot, title=self.name)
         plot = self._plot_scale(plot, xlim=self.scale_lim, ylim=self.scale_lim)
         plot = self._plot_colorscale(plot, rescale=True, color_map=c_map)
-        plot = plot + p9.geom_point(na_rm="False")
+        plot = plot + p9.geom_point(na_rm=False)
 
         return plot
 
@@ -1409,7 +1409,7 @@ class Plotter():
         Adds the value of each datapoint under the column names "UMAP1" and "UMAP2"
             :param parameters: the parameters to use for umap calculation
             :param q: the quantile range to use for centering and scaling of the data (q_min, q_max)
-            :param seed: the seed used
+            :param seed: the seed used; if 'None' the seed is randomly generated
         """
         for param in parameters:
             if not (param == self.data.columns).any():
@@ -1465,9 +1465,9 @@ class Plotter():
 
     def add_pca(self, parameters: List[str], q: Tuple[float, float]=(0.05, 0.95)):
         """
-        Calculates the Principle Componet axis
+        Calculates the Principle Component axis
         Adds the value of each datapoint loading under the column names "PCn" (replace n with number of PC)
-            :param parameters: the parameters to use for umap calculation
+            :param parameters: the parameters to use for pca calculation
             :param q: the quantile range to use for centering and scaling of the data (q_min, q_max)
         """
         for param in parameters:
@@ -1481,6 +1481,7 @@ class Plotter():
         data_samples = [y for x, y in self.data.groupby("__sample")]
 
         plots = []
+        pca_norm = {}
         for sample in data_samples:
             # Standard/RobustScaler - they centralize based on mean/median. In flowcytometry data
             # we cannot assume that the distributions (generalize as a mix of two gaussians) shows equal/between sample
@@ -1489,16 +1490,28 @@ class Plotter():
             # The mean of the quantiles will likely give a distribution agnostic centralisation.
             # Other option would be the geoMean, but that is quite influenced by the outliers
 
+            # Get sample id for metadata storage
+            sample_id = sample["__sample"].iloc[0]
+            sample_scale = pd.DataFrame(columns=("q_0", "q_1", "q_mean"))
+                        
             # scale
             quantiles = sample[parameters].quantile(q=q)
+            sample_scale["q_0"] = quantiles.loc[q[0]]
+            sample_scale["q_1"] = quantiles.loc[q[1]]
             
             sample[parameters] = (sample[parameters] - quantiles.loc[q[0]]) / (quantiles.loc[q[1]] - quantiles.loc[q[0]])
 
             # Center
             quantiles = sample[parameters].quantile(q=q)
             q_mean = quantiles.mean()
+            sample_scale["q_mean"] = q_mean
             
             sample[parameters] = sample[parameters] - q_mean
+
+            # Add normalization metadata
+            pca_norm[sample_id] = sample_scale
+
+        self.metadata["__pca_scalers"] = pca_norm
 
         scaled_data = pd.concat(data_samples)
 
@@ -1507,6 +1520,7 @@ class Plotter():
         pca = sklearn.decomposition.PCA(n_components=n_components)
         pca.fit(scaled_data[parameters])
 
+
         # Calculate transformation for sample plotting
         pca_data = pd.DataFrame(pca.transform(scaled_data[parameters]))
         pca_data.index = self.data.index
@@ -1514,6 +1528,11 @@ class Plotter():
 
         self._data[pca_data.columns] = pca_data
         self.labels.update({f"PC{i+1}":f"PC{i+1}: {round(x*100,2)}%" for i, x in enumerate(pca.explained_variance_)})
+
+        # Store component mean for value overlaying
+        pca_mean = pd.Series(pca.mean_)
+        pca_mean.index = parameters
+        self.metadata["__pca_means"] = pca_mean
 
         # Store the components for vector plotting
         pca_vector = pd.DataFrame(pca.components_)

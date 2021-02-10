@@ -334,8 +334,15 @@ class _RectangleGating(_AbstractGating):
         Parses the data of the element
             :param element: RectangleGate element.
         """
-        self.percent_x = float(element.attrib["percentX"])
-        self.percent_y = float(element.attrib["percentY"])
+        try:
+            self.percent_x = float(element.attrib["percentX"])
+        except KeyError:
+            self.percent_x = None
+
+        try:
+            self.percent_y = float(element.attrib["percentY"])
+        except KeyError:
+            self.percent_x = None
 
         dimension_elements = element.findall("{http://www.isac-net.org/std/Gating-ML/v2.0/gating}dimension")
         
@@ -352,7 +359,15 @@ class _RectangleGating(_AbstractGating):
         except:
             self.max_x = None
 
-        self.dimension_y = dimension_elements[1][0].attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
+        # Gates on histograms are only 1 dimensional
+        try:
+            self.dimension_y = dimension_elements[1][0].attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
+        except IndexError:
+            self.dimension_y = None
+            self.min_y = None
+            self.max_y = None
+            return
+
         try:
             self.min_y = float(dimension_elements[1].attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/gating}min"])
         except:
@@ -370,14 +385,16 @@ class _RectangleGating(_AbstractGating):
         Returns an array defining if a x-y point is contained by the gating (border of the gates is excluded of the gate, as does FlowJo)
         For some gatings x and y need to be transformed first. Therefore the transformations are essential information.
             :param data: the data containing the x-y dimension in channel format
-            :param transform_x: a transformation object defining the transformation of the x-dimension
-            :param transform_y: a transformation object defining the transformation of the y-dimension
+            :param transform_x: (optional) a transformation object defining the transformation of the x-dimension
+            :param transform_y: (optional) a transformation object defining the transformation of the y-dimension
             :returns: a boolean series. True if contained by/edge of the gate
         """
         if not (data.columns == self.dimension_x).any():
             raise ValueError(f"data doesnt contain a column for dimension x '{self.dimension_x}'")
-        if not (data.columns == self.dimension_y).any():
-            raise ValueError(f"data doesnt contain a column for dimension y '{self.dimension_y}'")
+
+        if transform_y is not None:
+            if not (data.columns == self.dimension_y).any():
+                raise ValueError(f"data doesnt contain a column for dimension y '{self.dimension_y}'")
 
         boolean_result = np.array([True]*len(data.index))
         if self.max_x:
@@ -402,7 +419,8 @@ class _RectangleGating(_AbstractGating):
         """
         Returns a polygon path defining the gate border
             :param transform_x: a transformation object defining the transformation of the x-dimension
-            :param transform_y: a transformation object defining the transformation of the y-dimension
+            :param transform_y: (optional) a transformation object defining the transformation of the y-dimension
+            :returns: a one (if transform_y is None) or two dimensional polygon representation of the gate
         """
         x_min = -1 if self.min_x is None else self.min_x
         x_max = 1024 if self.max_x is None else self.max_x
@@ -413,10 +431,16 @@ class _RectangleGating(_AbstractGating):
         y = [y_max, y_max, y_min, y_min, y_max]
 
         channel_x = transform_x.scaler(x, start=CHANNEL_MIN, end=CHANNEL_MAX)
-        channel_y = transform_y.scaler(y, start=CHANNEL_MIN, end=CHANNEL_MAX)
+    
+        if transform_y is not None:
+            channel_y = transform_y.scaler(y, start=CHANNEL_MIN, end=CHANNEL_MAX)
+        
+            polygon = pd.DataFrame(list(zip(channel_x, channel_y)))
+            polygon.columns = [self.dimension_x, self.dimension_y]
 
-        polygon = pd.DataFrame(list(zip(channel_x, channel_y)))
-        polygon.columns = [self.dimension_x, self.dimension_y]
+        else:
+            polygon = pd.DataFrame([channel_x]).transpose()
+            polygon.columns = [self.dimension_x]
 
         return polygon 
 

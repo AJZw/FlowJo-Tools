@@ -42,6 +42,9 @@ examples/
 main.py
 main2.py
 main3.py
+main4.py
+timer.py
+example_laura.py
 paper_figures.py
 wsp_matrix_combine.py
 umap_scaling.py
