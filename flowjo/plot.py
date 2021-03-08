@@ -430,9 +430,16 @@ class Plotter():
             )
 
         if x is None:
-            x = self.labels[plot.mapping["x"]]
+            try:
+                x = self.labels[plot.mapping["x"]]
+            except KeyError:
+                x = plot.mapping["x"]
+
         if y is None:
-            y = self.labels[plot.mapping["y"]]
+            try:
+                y = self.labels[plot.mapping["y"]]
+            except KeyError:
+                y = plot.mapping["y"]
 
         plot = plot + p9.labs(
             x=x, 
@@ -550,7 +557,10 @@ class Plotter():
         else:
             raise ValueError(f"unimplemented colorscale dtype {plot.data[color].dtype}")
 
-        plot = plot + p9.labs(color=self.labels[color])
+        try:
+            plot = plot + p9.labs(color=self.labels[color])
+        except KeyError:
+            plot = plot + p9.labs(color=color)
 
         return plot
     
@@ -619,7 +629,10 @@ class Plotter():
         else:
             raise ValueError(f"unimplemented fillscale dtype {plot.data[fill].dtype}")
 
-        plot = plot + p9.labs(fill=self.labels[fill])
+        try:
+            plot = plot + p9.labs(color=self.labels[fill])
+        except KeyError:
+            plot = plot + p9.labs(color=fill)
 
         return plot
 
@@ -1281,7 +1294,101 @@ class Plotter():
                 )
 
         return plot
+
+    def histogram(self, x: str, c: str=None, c_map: dict=None) -> p9.ggplot:
+        """
+        Creates a ggplot dotplot object with the correct data and axis
+            :param x: the x dimension
+            :param c: (optional) the color dimension (must be factor)
+            :param c_map: (optional) uses the c_map to map the c-levels
+        """
+        if c is None:
+            data = copy.deepcopy(self.data[[x]])
+        else:
+            data = copy.deepcopy(self.data[[x, c]])
+
+        if c is not None:
+            if pd.api.types.is_categorical_dtype(data[c]) or pd.api.types.is_string_dtype(data[c]) or pd.api.types.is_bool_dtype(data[c]):
+                #categorical
+                pass
+            else:
+                raise ValueError(f"c '{c}' must be a categorical dtype")
+
+        # Randomize data order
+        data = data.sample(frac=1)
+
+        # Get binwidth
+        data_range = max(data[x]) - min(data[x])
+        binwidth = data_range / 100
         
+
+        if not (data.columns == x).any():
+            raise ValueError(f"x '{x}' does not specify columns in .data")
+
+        if not pd.api.types.is_numeric_dtype(data[x]):
+            raise ValueError(f"x '{x}' must be a numeric dtype")
+
+        plot = p9.ggplot(
+            mapping=p9.aes(x)
+        )
+
+        plot = self._plot_theme(plot)
+        plot = plot + p9.ggtitle(self.name)
+        plot = plot + p9.labs(x=x)
+            
+        try:
+            scale_x = self.scales[x]
+        except KeyError:
+            plot = plot + p9.coords.coord_cartesian()
+        else:
+            xlim = self.scale_lim
+            plot = plot + p9.scale_x_continuous(
+                breaks=scale_x.major_ticks(start=xlim[0], end=xlim[1]),
+                minor_breaks=scale_x.minor_ticks(start=xlim[0], end=xlim[1]),
+                labels=scale_x.labels(start=xlim[0], end=xlim[1]),
+                expand=(0,0),
+                limits=xlim
+            )
+
+        #plot = self._plot_colorscale(plot, rescale=True, color_map=c_map)
+        if c is None:
+            plot = plot + p9.geom_histogram(data=data, na_rm=True, binwidth=binwidth, fill="#0000f0ff", color="#000000ff")
+        else:           
+            # the tab10 & 20 discrete colorscales
+            tab10 = ["#1f77b4","#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+            tab20 = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"]
+
+            levels = data[c].unique()
+
+            if c_map:
+                # Check if c_map covers all cases
+                for level in levels:
+                    if level not in c_map:
+                        # ignore np.nans, handled by plotnine
+                        if pd.isnull(level):
+                            pass
+                        else:
+                            raise ValueError(f"level '{level}' undefined in c_map")
+            else:
+                if len(levels) <= 10:
+                    t_map = tab10
+                elif len(leels) <= 20:
+                    t_map = tab20
+                else:
+                    raise ValueError("undefined default colormap for levels of size >20")
+
+            for i, level in enumerate(levels):
+                #ignore nan's
+                if isinstance(level, float) and np.isnan(level):
+                    continue
+                data_level = data.loc[data[c] == level]
+                if c_map:
+                    plot = plot + p9.geom_histogram(data=data_level, na_rm=True, binwidth=binwidth, fill=c_map[level], color="#00000000", alpha=0.2)
+                else:
+                    plot = plot + p9.geom_histogram(data=data_level, na_rm=True, binwidth=binwidth, fill=t_map[i], color="#00000000", alpha=0.2)
+
+        return plot
+
     ## algorithms
 
     @staticmethod

@@ -293,7 +293,8 @@ v1.4 - Implemented FlowJo wsp parser
 v1.5 - Implemented factorized gate membership export  
 v1.6 - Implemented PCA dimensional reduction  
 v1.7 - Implemented Correlation line graph  
-v1.8 - Implemented range gates
+v1.8 - Implemented range gates  
+v1.9 - Implemented basic histogram graph
 
 ## License
 
