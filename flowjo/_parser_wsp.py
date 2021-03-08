@@ -1,11 +1,11 @@
 ##############################################################################     ##    ######
-#    A.J. Zwijnenburg                   2020-09-24           v1.4                 #  #      ##
-#    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
+#    A.J. Zwijnenburg                   2021-03-08           v1.8                 #  #      ##
+#    Copyright (C) 2021 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2020 - AJ Zwijnenburg
+# Copyright (C) 2021 - AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -531,7 +531,12 @@ class _PolygonGating(_AbstractGating):
 
         polygon = mpl_path.Path(list(zip(channel_x, channel_y)), closed=False)
 
-        return pd.Series(polygon.contains_points(data[[self.dimension_x, self.dimension_y]]))
+        contained = pd.Series(polygon.contains_points(data[[self.dimension_x, self.dimension_y]]))
+        
+        # polygon contains drops index; add index
+        contained.index = data.index
+
+        return contained
 
 class _EllipsoidGating(_AbstractGating):
     """

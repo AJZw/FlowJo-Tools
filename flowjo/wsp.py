@@ -1,11 +1,11 @@
 ##############################################################################     ##    ######
-#    A.J. Zwijnenburg                   2020-09-30           v1.0                 #  #      ##
-#    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
+#    A.J. Zwijnenburg                   2021-03-08           v1.8                 #  #      ##
+#    Copyright (C) 2021 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2020 - AJ Zwijnenburg
+# Copyright (C) 2021 - AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -138,7 +138,7 @@ Provides a nice 'attributy' getter of compensation matrixes
 
 from __future__ import annotations
 
-from ._parser_wsp import Parser as _Parser, Gate, _AbstractGating, CHANNEL_MIN, CHANNEL_MAX
+from ._parser_wsp import Parser as _Parser, _AbstractGating, CHANNEL_MIN, CHANNEL_MAX
 from ._parser_wsp import Cytometer as _Cytometer, Sample as _Sample, Group as _Group, Gate as _Gate
 from .matrix import MTX
 from .transform import _Abstract as _AbstractTransform
@@ -591,7 +591,7 @@ class Sample:
 
         self.data_format = "channel"
     
-    def compensate_date(self) -> None:
+    def compensate_data(self) -> None:
         """
         Applies the compensation matrix to the data
         """
@@ -687,7 +687,7 @@ class Sample:
 
     def transforms(self) -> Dict[str, _AbstractTransform]:
         """
-        Getter for the transforms data, returns the transforms data adjusted for parameter name. This return
+        Getter for the transforms data, returns the transforms data adjusted for parameter name. The return
         dictionary is effectively a deepcopy
         """
         transforms = {}
@@ -778,9 +778,11 @@ class Sample:
             return
 
         self._data = self._data.sample(n, replace=False, random_state=seed)
+        self._data = self._data.sort_index()
 
         # because the indexes are still valid, no need to reapply gates
-        # self._apply_gates()
+        # Yes, but the counts are no longer correct after subsampling; so reapply
+        self._gates._apply_gates()
 
 class _Gates:
     """

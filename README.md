@@ -22,15 +22,96 @@ umap-learn >=0.4.6 (for plot module Plotter.add_umap())
 
 ## Installation
 
-Copy the folder 'flowjo' with its contents into the project folder of the project and import directly.
+Copy the folder 'flowjo' with its contents into the project folder of the project and import directly.  
+Please, make sure the requirements are met.
+
+## Quickstart
+
+A quick start for quick results!  
+For a full list of attributes and function see 'Usage' or the documentation inside the modules.  
+  
+This 'flowjo' module provides an interface with FlowJo's workspace (.wsp) files.  
+It extends FlowJo's capabilities and presents FlowJo's data as a Panda matrix.  
+In the workflow FlowJo still has to be used for compensation and gating.  
+  
+Workflow:  
+• Use FlowJo to setup the compensation and gating  
+• Export the fcs data in csv format:  
+•• Press 'right mouse button' on the (selection of) sample(s)  
+•• Press 'Export / Concatenate Populations'  
+•• Set the output format to 'CSV - Channel values'  
+•• Set 'Include header' to 'Parameter'  
+•• Set 'Parameters' to 'All compensated parameters'  
+•• Enable 'Advanced Options'  
+•• Clear the 'Prefix'  
+•• Set 'Body' to 'Custom' and use 'Edit' to remove 'FJ_LAST_UNIQUE_POP_NAME'  
+•• Keep 'Suffix' empty  
+•• Press 'Export'
+• Save the workspace as a .wsp file
+
+• Now that we have used FlowJo to setup up the data for us, we will continue using this 'flowjo' module:
+
+```python
+# The flowjo.wsp module contains components for the reading of .wsp files
+from flowjo.wsp import Workspace
+
+# Lets assume we have stored all data in the local 'mydata' directory
+# First we have to read the workspace file 
+workspace = Workspace("mydata/workspace.wsp")
+
+# We need to add the csv data to this workspace
+# The format and compensation status have to be filled-in
+workspace.load_data("mydata", format="channel", compensated=True)
+
+# Now we can have a look at the data within the .wsp file
+# Check the samples using:
+print(workspace.samples)
+# Check the groups using:
+print(workspace.groups)
+
+# All data can be identically manipulated as a group or single sample, let's use a single sample as example:
+# Request a sample using the sample's name
+sample = workspace.samples["sample_1"]
+# You can check the gates like this:
+print(sample.gates)
+# You can select all events in a gate as follows:
+gate = sample.gates["gate_name"]
+
+# You can grab all events in this gate:
+# This returns a Panda's DataFrame
+gate_data = gate.data()
+
+
+# You might want to plot this data
+# Therefore a useful plotting module is available
+from flowjo.plot import Plotter
+
+# The plotter works with workspace/group/sample data
+plot = Plotter(sample)
+
+# The plotter needs to know how to transform the data
+plot.scale.update(sample.transforms())
+
+# Plot a scatter plot with
+plot = plotter.scatter(x="CX3CR1", y="CD27", c="CCR7")
+# Or use the raster plot for more functionalities (but slow)
+plot = plotter.raster(x="CX3CR1", y="CD27", c="CCR7", c_stat="density")
+
+# Finally lets show the graph to the world
+print(plot)
+
+# For further details check the 'usage' or the function documentation inside the modules
+```
 
 ## Usage
 
+These code-examples provide an overview of the commonly used functions and attributes.  
+The examples are split up based on the to-be-explained module.  
+  
 FlowJo workspace example:
 
 ```python
 from flowjo.wsp import Workspace
-from flowjo.plot import Plotter
 
 # Load the wsp file
 workspace = Workspace("path/to/workspace.wsp")
@@ -129,13 +210,14 @@ data = group.gate_data(factor=factor)
 
 # The exported data can be plotted with correct scales as follows:
 # First assign the data to a plotter
+from flowjo.plot import Plotter
 plot = Plotter(data)
 # The scaling has to be set manually; here the scales are updated from the wsp information
 plot.scale.update(group.transforms())
 plot.scatter("x", "y", "color")
 ```
 
-FlowJo data export with gata annotation example:
+FlowJo data export with gate annotation example:
 
 ```python
 # This is an example of the python code to run
