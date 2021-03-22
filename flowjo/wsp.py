@@ -1292,7 +1292,7 @@ class Cytometer:
 
     def __repr__(self) -> str:
         output = f"name: {self.name}\n"
-        output += f"compensation: [{', '.join([x.name for x in self.compensation])}]"
+        output += f"compensation: [{', '.join([x for x in self.compensation])}]"
 
         return output
 
