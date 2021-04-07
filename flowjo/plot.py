@@ -46,16 +46,16 @@ Rasterization is slow as proper statistics are be calculated per bin
 """
 
 from __future__ import annotations
+from typing import Any, List, Dict, Union, Tuple, Callable
 
+from . import transform
 from .data import _Abstract
-from .transform import Linear, Biex, Log
 from PIL import Image
 import pandas as pd
 import numpy as np
 import plotnine as p9
 import scipy
 import matplotlib.pyplot as plt
-import matplotlib
 import os
 import io
 import copy
@@ -224,6 +224,9 @@ class Plotter():
     It will use (mainly) plotnine plots
         :param data: FlowJo data
     """
+    tab10 = ["#1f77b4","#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    tab20 = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"]
+
     def __init__(self, data: Union[pd.DataFrame, _Abstract]):
         self.name: str=None
         self._data: pd.DataFrame=None
@@ -241,14 +244,14 @@ class Plotter():
         self.is_channel: bool=True
         self.scale_lim: Tuple[int,int]=[0, 1023]
 
-        self.scales: Dict[str, _Scale]={
-            "FSC-A":Linear(start=0, end=262144),
-            "FSC-W":Linear(start=0, end=262144),
-            "FSC-H":Linear(start=0, end=262144),
-            "SSC-A":Linear(start=0, end=262144),
-            "SSC-W":Linear(start=0, end=262144),
-            "SSC-H":Linear(start=0, end=262144),
-            "Time":Linear(start=0, end=262144)
+        self.scales: Dict[str, transform._Abstract]={
+            "FSC-A":transform.Linear(start=0, end=262144),
+            "FSC-W":transform.Linear(start=0, end=262144),
+            "FSC-H":transform.Linear(start=0, end=262144),
+            "SSC-A":transform.Linear(start=0, end=262144),
+            "SSC-W":transform.Linear(start=0, end=262144),
+            "SSC-H":transform.Linear(start=0, end=262144),
+            "Time":transform.Linear(start=0, end=262144)
         }
         self.labels: Dict[str, str] = {
             "__sample":"sample"
@@ -314,6 +317,35 @@ class Plotter():
             print("It looks like the data consists of flowjo scale data. Please set the scaling and axis limits yourself.")
 
     ## abstract plotting functions
+    def _plot_check(self, data: pd.Dataframe, x: str, y: str=None, color: str=None, fill: str=None) -> None:
+        """
+        Checks for existance and correctness of the plotting parameters
+            :param data: the data table with all necessary plotting information.
+            :param x: the x-axis parameter
+            :param y: the y-axis parameter
+            :param color: for solid object the fill, for non-solid object the outline parameter
+            :param fill: for non-solid objects the fill parameter
+        """
+        if not (data.columns == x).any():
+            raise ValueError(f"x '{x}' does not specify columns in .data")
+
+        if not pd.api.types.is_numeric_dtype(data[x]):
+            raise ValueError(f"x '{x}' must be a numeric dtype")
+
+        if y:
+            if not (data.columns == y).any():
+                raise ValueError(f"y '{y}' does not specify columns in .data")
+            
+            if not pd.api.types.is_numeric_dtype(data[y]):
+                raise ValueError(f"y '{y}' must be a numeric dtype")
+
+        if color:
+            if not (data.columns == color).any():
+                raise ValueError(f"color '{color}' does not specify columns in .data")
+
+        if fill:
+            if not (data.columns == fill).any():
+                raise ValueError(f"fill '{fill}' does not specify columns in .data")
 
     def _plot_base(self, data: pd.Dataframe, x: str, y: str, color: str=None, fill: str=None) -> p9.ggplot:
         """
@@ -329,26 +361,6 @@ class Plotter():
         if id(data) == id(self.data):
             raise ValueError("make sure to call _plot_base with a deepcopy of data")
 
-        if not (data.columns == x).any():
-            raise ValueError(f"x '{x}' does not specify columns in .data")
-
-        if not pd.api.types.is_numeric_dtype(data[x]):
-            raise ValueError(f"x '{x}' must be a numeric dtype")
-
-        if not (data.columns == y).any():
-            raise ValueError(f"y '{y}' does not specify columns in .data")
-        
-        if not pd.api.types.is_numeric_dtype(data[y]):
-            raise ValueError(f"y '{y}' must be a numeric dtype")
-
-        if color:
-            if not (data.columns == color).any():
-                raise ValueError(f"color '{color}' does not specify columns in .data")
-
-        if fill:
-            if not (data.columns == fill).any():
-                raise ValueError(f"fill '{fill}' does not specify columns in .data")
-        
         # relevels the data
         for column in data.columns:
             if column in self.levels:
@@ -525,10 +537,6 @@ class Plotter():
         elif pd.api.types.is_categorical_dtype(plot.data[color]) or pd.api.types.is_string_dtype(plot.data[color]) or pd.api.types.is_bool_dtype(plot.data[color]):
             # Discrete
             
-            # the tab10 & 20 discrete colorscales
-            tab10 = ["#1f77b4","#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
-            tab20 = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"]
-
             levels = plot.data[color].unique()
 
             if color_map:
@@ -547,7 +555,7 @@ class Plotter():
                 )
             elif len(levels) <= 10:
                 plot = plot + p9.scales.scale_color_manual(
-                    values = tab10,
+                    values = self.tab10,
                     na_value=self.color_na
                 )
             else:
@@ -597,10 +605,6 @@ class Plotter():
         elif pd.api.types.is_categorical_dtype(plot.data[fill]) or pd.api.types.is_string_dtype(plot.data[fill]) or pd.api.types.is_bool_dtype(plot.data[fill]):
             # Discrete
             
-            # the tab10 & 20 discrete colorscales
-            tab10 = ["#1f77b4","#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
-            tab20 = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"]
-
             levels = plot.data[fill].unique()
 
             if fill_map:
@@ -619,7 +623,7 @@ class Plotter():
                 )
             elif len(levels) <= 10:
                 plot = plot + p9.scales.scale_fill_manual(
-                    values = tab10,
+                    values = self.tab10,
                     na_value=self.fill_na
                 )
             else:
@@ -724,6 +728,8 @@ class Plotter():
             :param c: the c dimension - used for color mapping
             :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
         """
+        self._plot_check(self.data, x, y, c, fill=None)
+
         if c in [x, y]:
             data = copy.deepcopy(self.data[[x, y]])
         else:
@@ -770,6 +776,8 @@ class Plotter():
             :param bin_size: effectively the size of the raster squares
             :param c_map: only used for categorical color parameters. Uses the c_map to map the levels
         """
+        self._check_plot(self.data, x, y, c, fill=None)
+
         if c in [x, y]:
             raise ValueError("the c dimension cannot be equal to the x or y dimension")
 
@@ -835,11 +843,16 @@ class Plotter():
             :param xy_bin: effectively the size of the raster squares, argument to _reduce()
             :param z_bin: determines the z-stack size, argument to _reduce()
         """
-        if c_stat not in ["density", "max", "min", "mean", "blank", "sum"]:
-            raise ValueError(f"raster plotting has no implementation for c_stat '{c_stat}'")
+        self._plot_check(self.data, x, y, c, fill=None)
+
+        if not (self.data.columns == z).any():
+            raise ValueError(f"z '{z}' does not specify columns in .data")
 
         if not pd.api.types.is_numeric_dtype(self.data[z]):
             raise ValueError(f"z '{z}' must be a numeric dtype to allow for raster_3d plotting")
+        
+        if c_stat not in ["density", "max", "min", "mean", "blank", "sum"]:
+            raise ValueError(f"raster plotting has no implementation for c_stat '{c_stat}'")
 
         # Correct source data
         data = copy.deepcopy(self.data[[x, y, z, c]])
@@ -881,16 +894,16 @@ class Plotter():
             min_color = quantiles[0.0]
             max_color = quantiles[1.0]
 
-        # build title
-        if self.name:
-            title = f"{self.name}\n{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
-        else:
-            title = f"{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
-
         # Group based on z
         z_stack: List[pd.DataFrame] = [y for x, y in data.groupby(z, as_index=False)]
         plots: List[p9.ggplot] = []
         for i, frame in enumerate(z_stack):
+            # build title
+            if self.name:
+                title = f"{self.name}\n{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
+            else:
+                title = f"{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
+
             plot = self._plot_base(frame, x, y, fill=c)
             plot = self._plot_theme(plot)
             plot = self._plot_labels(plot, title=title)
@@ -926,20 +939,10 @@ class Plotter():
             :param bin_size: effectively the size of the raster squares. by bin_size >12 you will start loosing accuracy on the scales.
             :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
         """
-        # Do some basic checks that normally would happen in _plot
-        if not (self.data.columns == x).any():
-            raise ValueError(f"x '{x}' does not specify columns in .data")
-        if not (self.data.columns == y).any():
-            raise ValueError(f"y '{y}' does not specify columns in .data")
+        self._plot_check(self.data, x, y, c, fill=None)
+
         if not (self.data.columns == z).any():
             raise ValueError(f"z '{z}' does not specify columns in .data")
-        if c and not (self.data.columns == c).any():
-            raise ValueError(f"c '{c}' does not specify columns in .data")
-
-        if not pd.api.types.is_numeric_dtype(self.data[x]):
-            raise ValueError(f"x '{x}' must be a numeric dtype")
-        if not pd.api.types.is_numeric_dtype(self.data[y]):
-            raise ValueError(f"y '{y}' must be a numeric dtype")
         if not pd.api.types.is_numeric_dtype(self.data[z]):
             raise ValueError(f"z '{z}' must be a numeric dtype")
         
@@ -1112,6 +1115,8 @@ class Plotter():
             :param bin_size: the bin_size of x
             :param min_events: the minimum amount of events in a bin
         """
+        self._plot_check(self.data, x, y, color=None, fill=None)
+
         if y_stat not in ["density", "max", "min", "mean", "geomean", "blank", "sum"]:
             raise ValueError(f"line plotting has no implementation for y_stat '{y_stat}'")
 
@@ -1302,6 +1307,8 @@ class Plotter():
             :param c: (optional) the color dimension (must be factor)
             :param c_map: (optional) uses the c_map to map the c-levels
         """
+        self._plot_check(x, y=None, color=c, fill=None)
+
         if c is None:
             data = copy.deepcopy(self.data[[x]])
         else:
@@ -1321,13 +1328,6 @@ class Plotter():
         data_range = max(data[x]) - min(data[x])
         binwidth = data_range / 100
         
-
-        if not (data.columns == x).any():
-            raise ValueError(f"x '{x}' does not specify columns in .data")
-
-        if not pd.api.types.is_numeric_dtype(data[x]):
-            raise ValueError(f"x '{x}' must be a numeric dtype")
-
         plot = p9.ggplot(
             mapping=p9.aes(x)
         )
@@ -1354,10 +1354,6 @@ class Plotter():
         if c is None:
             plot = plot + p9.geom_histogram(data=data, na_rm=True, binwidth=binwidth, fill="#0000f0ff", color="#000000ff")
         else:           
-            # the tab10 & 20 discrete colorscales
-            tab10 = ["#1f77b4","#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
-            tab20 = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"]
-
             levels = data[c].unique()
 
             if c_map:
@@ -1371,9 +1367,9 @@ class Plotter():
                             raise ValueError(f"level '{level}' undefined in c_map")
             else:
                 if len(levels) <= 10:
-                    t_map = tab10
-                elif len(leels) <= 20:
-                    t_map = tab20
+                    t_map = self.tab10
+                elif len(levels) <= 20:
+                    t_map = self.tab20
                 else:
                     raise ValueError("undefined default colormap for levels of size >20")
 
@@ -1423,7 +1419,7 @@ class Plotter():
         self.scale_lim[1] = self.scale_lim[1] // factor
 
     @staticmethod
-    def _bin(data: pd.DataFrame, x: str, y: str=None, z: str=None, condensor: Callable[pd.Series]=_condensor_mean) -> pd.DataFrame:
+    def _bin(data: pd.DataFrame, x: str, y: str=None, z: str=None, condensor: Callable[[pd.Series], Any]=_condensor_mean) -> pd.DataFrame:
         """
         Bins the pandas dataframe in 1(x), 2(x,y) or 3(x,y,z) dimensions.
         The value of the bin will be calculated using all data in that bin using the condensor function.
@@ -1498,7 +1494,7 @@ class Plotter():
 
         return binned
 
-    def bin(self, x: str, y: str=None, z: str=None, condensor: Callable[pd.Series]=_condensor_mean) -> None:
+    def bin(self, x: str, y: str=None, z: str=None, condensor: Callable[[pd.Series], Any]=_condensor_mean) -> None:
         """
         Splits the dataframe in x (and if applicable y, z). Each unique x(,y,z) split will be condensed
         into a single datapoint using the condensor functor. 

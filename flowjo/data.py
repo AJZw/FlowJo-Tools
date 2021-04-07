@@ -22,6 +22,9 @@
 ##############################################################################
 
 """
+This is the OLD method of moving data from FlowJo to pandas. It is way more convenient
+to make use of the Workspace() method (see README.md)
+
 Allows for the exporting of FlowJo data to a gate-annotated pd.DataFrame
 
 :class: _Abstract
@@ -108,6 +111,7 @@ Step-by-step walkthrough
 """
 
 from __future__ import annotations
+from typing import List
 
 import pandas as pd
 import numpy as np

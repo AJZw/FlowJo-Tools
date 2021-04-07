@@ -36,9 +36,9 @@ A class for the opening, saving, and manipulation of FlowJo .mtx compensation ma
 """
 
 from __future__ import annotations
-from typing import Union, Tuple, List
-from copy import deepcopy
+from typing import Union, List, Dict
 
+import copy
 import os.path
 from lxml import etree
 
@@ -505,7 +505,7 @@ class Matrix:
         """
         Matrix addition, accepts all non-str primitive types, and Matrix type
         """
-        matrix = deepcopy(self)
+        matrix = copy.deepcopy(self)
         matrix += other
         return matrix
 
@@ -564,7 +564,7 @@ class Matrix:
         """
         Matrix substraction, accepts all non-str primitive types, and Matrix type
         """
-        matrix = deepcopy(self)
+        matrix = copy.deepcopy(self)
         matrix -= other
         return matrix
 

@@ -294,7 +294,10 @@ v1.5 - Implemented factorized gate membership export
 v1.6 - Implemented PCA dimensional reduction  
 v1.7 - Implemented Correlation line graph  
 v1.8 - Implemented range gates  
-v1.9 - Implemented basic histogram graph
+v1.9 - Implemented basic histogram graph  
+v1.10 - Bugfix: not all parameter names were correctly extracted / group gates now show properly  
+v1.11 - Scale ticks/labels now generator based, better error messages  
+v1.12 - GroupGates now properly implemented
 
 ## License
 

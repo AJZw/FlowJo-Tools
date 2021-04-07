@@ -142,11 +142,12 @@ The main parser of a workspace (.wsp) file
 """
 
 from __future__ import annotations
+from typing import Dict, List
 
 from lxml import etree
 
 from .data import _Abstract
-from .transform import _Abstract as _AbstractTransform, Linear as LinearTransform, Biex as BiexTransform, Log as LogTransform
+from .transform import _Abstract as _AbstractTransform, Linear as LinearTransform, Biex as BiexTransform, Log10 as Log10Transform
 from .matrix import MTX
 
 import matplotlib as mpl
@@ -172,14 +173,14 @@ class Gate:
         self.owning_group: str = None
         self.count: int = None
 
-        self.gates: Dict[str, _AbstractGate] = {}
+        self.gates: Dict[str, Gate] = {}
 
         # Store boolean transform information
         self.boolean: str = None
         self.dependents: List[str] = []
 
         # Stores the actual gating information
-        self._gating: _Gating = None
+        self._gating: _AbstractGating = None
 
         self._parse(element)
 
@@ -797,7 +798,7 @@ class Cytometer():
                     name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
                     self.transforms[identifier][name] = scale
                 elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}log":
-                    scale = LogTransform(
+                    scale = Log10Transform(
                         start=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}offset"]),
                         end=int(10**float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}decades"]))
                     )
@@ -874,7 +875,7 @@ class Sample():
         self.count: int = None
 
         self.compensation: MTX = None
-        self.transforms: Dict[str, _AbstractScale] = {}
+        self.transforms: Dict[str, _AbstractTransform] = {}
         self.keywords: Dict[str, str] = {}
         self.gates: Dict[str, Gate] = {}
 
@@ -906,7 +907,7 @@ class Sample():
                 name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
                 self.transforms[name] = scale
             elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}log":
-                scale = LogTransform(
+                scale = Log10Transform(
                     start=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}offset"]),
                     end=int(10**float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}decades"]))
                 )
@@ -969,7 +970,7 @@ class Parser():
         # general data
         self.keywords: List[str] = []
         # matrix id: matrix
-        self.matrices: Dict[str, CompensationMatrix] = {}
+        self.matrices: Dict[str, MTX] = {}
         self.cytometers: List[Cytometer] = []
         # group name: group data
         self.groups: Dict[str, Group] = {}
