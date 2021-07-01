@@ -33,20 +33,10 @@
 
 # Folders
 __pycache__/
-.old/
 .venv/
 .vscode/
 .sitemaps/
 .data/
+paper/
 examples/
-main.py
-main2.py
-main3.py
-main4.py
-timer.py
-example_laura.py
-example_natalia.py
-paper_figures.py
-wsp_matrix_combine.py
-umap_scaling.py
-for_grant.py
+/*.py

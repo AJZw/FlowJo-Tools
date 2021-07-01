@@ -1,11 +1,11 @@
 ##############################################################################     ##    ######
-#    A.J. Zwijnenburg                   2020-09-24           v1.4                 #  #      ##
-#    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
+#    A.J. Zwijnenburg                   2021-07-07          v1.15                 #  #      ##
+#    Copyright (C) 2021 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2020 - AJ Zwijnenburg
+# Copyright (C) 2021 - AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,34 +23,20 @@
 
 """
 Classes for the plotting of FlowJo !Channel! data
-Channel data is pre-scaled by FlowJo and binnen to the values 0-1023
+Channel data is pre-scaled by FlowJo and binned to the values 0-1023
 As the scaling information is not exported the plot class cannot provide a default.
-Therefore it is beneficial to set Plot.scales for proper results
-
-:class: _condensor_density
-Condensor function for Plot._bin(). Returns the amount of cells/density
-
-:class: _condensor_mean
-Condensor function for Plot._bin(). Returns the mean value for numeric data or the mode for categorical data
-
-:class: _condensor_max
-Condensor function for Plot._bin(). Returns the max value for numeric data or the mode for categorical data
-
-:class: _condensor_min
-Condensor function for Plot._bin(). Returns the min value for numeric data or the mode for categorical data
+Therefore it is beneficial to set Plot.transforms for proper results
 
 :class: Plotter
 The main plotting class. Provides an interface for the convenient plotting of scatter and rasterized plots.
-Rasterization is slow as proper statistics are be calculated per bin
 
 """
 
 from __future__ import annotations
-from typing import Any, List, Dict, Union, Tuple, Callable
+from typing import Any, List, Dict, Union, Tuple
 
 from . import transform
 from .data import _Abstract
-from PIL import Image
 import pandas as pd
 import numpy as np
 import plotnine as p9
@@ -58,7 +44,6 @@ import scipy
 import matplotlib.pyplot as plt
 import os
 import io
-import copy
 
 # For screen
 p9.options.figure_size=(7.0, 7.0)
@@ -66,7 +51,7 @@ p9.options.figure_size=(7.0, 7.0)
 #p9.options.figure_size=(3.5, 3.5)
 
 ## Static functions
-def save(plot:p9.ggplot, name:str, path:str="") -> None:
+def save_raster(plot:p9.ggplot, name:str, path:str="") -> None:
     if path and not os.path.isdir(path):
         raise ValueError(f"path '{path}' doesnt point to existing directory")
 
@@ -84,148 +69,75 @@ def save(plot:p9.ggplot, name:str, path:str="") -> None:
 
     p9.options.figure_size=temp
 
-def plotnine_grid(plots: List[p9.ggplot], rows: int=1, cols: int=None) -> plt:
+def save_vector(plot:p9.ggplot, name:str, path:str="") -> None:
+    if path and not os.path.isdir(path):
+        raise ValueError(f"path '{path}' doesnt point to existing directory")
+
+    temp = p9.options.figure_size
+    p9.options.figure_size=(3.5, 3.5)
+
+    # Temporarily turn off plot view
+    plt.ioff()
+    
+    p9.ggsave(plot, os.path.join(path, f"{name}.svg"), dpi=300)
+
+    # Close all in the background drawn plots and renable plotview
+    plt.close("all")
+    plt.show()
+
+    p9.options.figure_size=temp
+
+def _plotnine_grid(plots: List[p9.ggplot], rows: int=1, cols: int=None) -> p9.ggplot:
     """
-    Create a single image of a grid of plotnine plots.
+    Create a single image of a grid of plotnine plots. This is a hack due to the limited matplotlib backend.
+    Might not work when the figures have legends...
         :param plots: a list of plotnine plots
         :param rows: (if specified) the amount of rows to generate
-        :param cols: (if specified) the amount of cols to generate  
+        :param cols: (if specified) the amount of cols to generate
 
+    Note: see https://github.com/has2k1/plotnine/issues/373
     """
-    # build matplotlib figures
-    figures = []
-    for plot in plots:
-        figures.append(plot.draw())
+    raise NotImplementedError("couldnt get it to work")
 
-## Condensor functions
-def _condensor_density(column: pd.Series) -> Any:
-    """
-    Example condensor function for the _bin function. Must accept a row pd.Series and return a single value
-    Both numeric and categorial data must be handled.
-        :param column: the input data, will be a column, because of 'apply(axis="index")'
-        :returns: the amount of cells in the input column
-    """
-    return len(column.index)
+    from matplotlib import gridspec
 
-def _condensor_mean(column: pd.Series) -> Any:
-    """
-    Example condensor function for the _bin function. Must accept a row pd.Series and return a single value
-    Both numeric and categorial data must be handled.
-        :param column: the input data, will be a column, because of 'apply(axis="index")'
-        :returns: categorical returns mode; numeric returns mean
-    """
-    if pd.api.types.is_numeric_dtype(column):
-        # numeric handling
-        output = column.mean(skipna=True)
-    else:
-        # categorical handling
-        output = column.mode(dropna=True)
-        if output.empty:
-            output = np.nan
-        else:
-            output = output.iloc[0]
-    return output
+    if rows is None and cols is None:
+        raise ValueError("please specify either rows or cols")
+    elif rows is None:
+        rows = int((len(plots) / cols)+1)
+    elif cols is None:
+        cols = int((len(plots) / rows)+1)
 
-def _condensor_geomean(column: pd.Series) -> Any:
-    """
-    Example condensor function for the _bin function. Must accept a row pd.Series and return a single value
-    Both numeric and categorial data must be handled.
-        :param column: the input data, will be a column, because of 'apply(axis="index")'
-        :returns: categorical returns mode; numeric returns mean
-    """
-    if pd.api.types.is_numeric_dtype(column):
-        # cast to float to prevent overflow errors
-        column = column.astype("float64", copy=False)
+    # empty figure to place subplots on
+    fig = (p9.ggplot()+p9.geom_blank(data=plots[0].data)+p9.theme_void()).draw()
 
-        # ignore invalid entrees
-        is_null = pd.isnull(column)
-        column = column[~is_null]
+    # Create gridspec for adding subpanels to the blank figure
+    gs = gridspec.GridSpec(rows, cols)
+    axes = []
+    for i in range(0, len(plots)):
+        i_row=int(i/cols)
+        i_col=i%cols
+        print(f"{i_row}:{i_col}")
+        axes.append(fig.add_subplot(gs[i_row, i_col]))
 
-        # treat zero's as 1's
-        not_zero = (column != 0)
-        if(not_zero.sum() == 0):
-            return np.nan
+    # Add subplots to the figure
+    for i, fig in enumerate(plots):
+        # remove legends to make this work
+        fig = fig + p9.theme(legend_position="none")
+        fig._themeable={}
+        _ = fig._draw_using_figure(fig, [axes[i]])
 
-        column[~not_zero] = 1
-
-        # And use the logarithmic sum, instead of normal product to prevent even more overflows
-        column = np.log(column)
-        output = np.exp(column.sum() / not_zero.sum())
-    else:
-        # categorical handling
-        output = column.mode(dropna=True)
-        if output.empty:
-            output = np.nan
-        else:
-            output = output.iloc[0]
-    return output
-
-def _condensor_max(column: pd.Series) -> Any:
-    """
-    Example condensor function for the _bin function. Must accept a row pd.Series and return a single value
-    Both numeric and categorial data must be handled.
-        :param column: the input data, will be a column, because of 'apply(axis="index")'
-        :returns: categorical returns mode; numeric returns max
-    """
-    if pd.api.types.is_numeric_dtype(column):
-        # numeric handling
-        output = column.max(skipna=True)
-    else:
-        # categorical handling
-        output = column.mode(dropna=True)
-        if output.empty:
-            output = np.nan
-        else:
-            output = output.iloc[0]
-    return output
-
-def _condensor_min(column: pd.Series) -> Any:
-    """
-    Example condensor function for the _bin function. Must accept a row pd.Series and return a single value
-    Both numeric and categorial data must be handled.
-        :param column: the input data, will be a column, because of 'apply(axis="index")'
-        :returns: categorical returns mode; numeric returns min
-    """
-    if pd.api.types.is_numeric_dtype(column):
-        # numeric handling
-        output = column.min(skipna=True)
-    else:
-        # categorical handling
-        output = column.mode(dropna=True)
-        if output.empty:
-            output = np.nan
-        else:
-            output = output.iloc[0]
-    return output
-
-def _condensor_blank(column: pd.Series) -> Any:
-    """
-    Example condensor function for the _bin function. Must accept a row pd.Series and return a single value
-    Returns the first entree of the series, no manipulation is done.
-        :param column: the input data, will be a column, because of 'apply(axis="index")'
-        :returns: first entree of the series
-    """
-    return column.iloc[0]
-
-def _condensor_sum(column: pd.Series) -> Any:
-    """
-    Example condensor function for _bin function. Must accept a row pd.Series and return a single value.
-    This condensor sums all values in the column.
-    Especially handy for boolean series as the sum returns the amount of True values.
-        :param column: the input data, will be a column, because of 'apply(axis="index")'
-        :returns: the amount of True values
-    """
-    # CAN LIKELY OVERFLOW!!!! keep in mind
-    return sum(column)
+    return fig
 
 class Plotter():
     """
     Main plotting class. Load it with data and ask it to generate plots from that data.
-    It will use (mainly) plotnine plots
+    Plotter always assumes the data is provided and stored transformed. 
+    The class generates plotnine (/matplotlib) plots
         :param data: FlowJo data
     """
-    tab10 = ["#1f77b4","#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
-    tab20 = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"]
+    tab10 = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    tab20 = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#98df8a",  "#ff9896", "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"]
 
     def __init__(self, data: Union[pd.DataFrame, _Abstract]):
         self.name: str=None
@@ -242,22 +154,32 @@ class Plotter():
         self.fill_na: str="#E3256B"
         self.fill_map: str="magma"
         self.is_channel: bool=True
-        self.scale_lim: Tuple[int,int]=[0, 1023]
 
-        self.scales: Dict[str, transform._Abstract]={
-            "FSC-A":transform.Linear(start=0, end=262144),
-            "FSC-W":transform.Linear(start=0, end=262144),
-            "FSC-H":transform.Linear(start=0, end=262144),
-            "SSC-A":transform.Linear(start=0, end=262144),
-            "SSC-W":transform.Linear(start=0, end=262144),
-            "SSC-H":transform.Linear(start=0, end=262144),
-            "Time":transform.Linear(start=0, end=262144)
+        # Stores the local and global spaces of the data parameters
+        self.transforms: Dict[str, transform._Abstract]={
+            "FSC-A":transform.Linear(l_start=0, l_end=1023, g_start=0, g_end=262144),
+            "FSC-W":transform.Linear(l_start=0, l_end=1023, g_start=0, g_end=262144),
+            "FSC-H":transform.Linear(l_start=0, l_end=1023, g_start=0, g_end=262144),
+            "SSC-A":transform.Linear(l_start=0, l_end=1023, g_start=0, g_end=262144),
+            "SSC-W":transform.Linear(l_start=0, l_end=1023, g_start=0, g_end=262144),
+            "SSC-H":transform.Linear(l_start=0, l_end=1023, g_start=0, g_end=262144),
+            "Time":transform.Linear(l_start=0, l_end=1023, g_start=0, g_end=262144)
         }
+
+        # The parameter are renamed according to the labels dictionary
         self.labels: Dict[str, str] = {
             "__sample":"sample"
         }
+
+        # The levels of a parameter are renamed according to the levels dictionary
         self.levels: Dict[str, Dict[str,str]] = {}
+
+        # Metadata storage
         self.metadata: Dict[str, Any] = {}
+
+        # Specifies which data point to mask
+        self.mask: pd.Series = None
+        self.mask_type: str = "remove" # choose from ["remove", "outline"]
 
         if isinstance(data, _Abstract):
             self.name = os.path.basename(data.path)
@@ -298,6 +220,7 @@ class Plotter():
                 return 0
             elif pd.api.types.is_numeric_dtype(column):
                 output = column.min(skipna=True)
+                return output
             else:
                 return 0
         
@@ -306,6 +229,7 @@ class Plotter():
                 return 0
             elif pd.api.types.is_numeric_dtype(column):
                 output = column.max(skipna=True)
+                return output
             else:
                 return 0
 
@@ -413,7 +337,7 @@ class Plotter():
             panel_grid_major_y=p9.element_blank(),
             panel_grid_minor_x=p9.element_blank(),
             panel_grid_minor_y=p9.element_blank(),
-            panel_background=p9.element_rect(fill="#eeeeeeff", color="#eeeeeeff"),
+            panel_background=p9.element_rect(fill="#f8f8f8ff", color="#eeeeeeff"),
             panel_border=p9.element_rect(fill=None, color="#000000ff", size=1.5),
             legend_title=p9.element_text(ha="left"),
             legend_key=p9.element_blank(),
@@ -460,46 +384,51 @@ class Plotter():
 
         return plot
 
-    def _plot_scale(self, plot: p9.ggplot, xlim: Tuple[int, int]=None, ylim: Tuple[int, int]=None) -> p9.ggplot:
+    def _plot_scale(self, plot: p9.ggplot, xlim: bool=True, ylim: bool=True, x: str=None, y: str=None) -> p9.ggplot:
         """
         Adds the scale limits to the plot
             :param plot: plot to add the scale to
-            :param xlim: (optional) sets the scale limits and enables proper axis scale representation
-            :param ylim: (optional) sets the scale limits and enables proper axis scale representation
+            :param xlim: (optional) whether to enable axis scale representation according to x-transform
+            :param ylim: (optional) whether to enable axis scale representation according to y-transform
+            :param x: (optional) overrides the parameter to base the x-transform/scale on
+            :param y: (optional) overrides the parameter to base the y-transform/scale on
         """
         if not self.is_channel:
             raise ValueError("you cannot use _plot_scale on non-channel data")
 
-        # Fetch scale from self.scales (if available)
-        if xlim is not None:
-            x = plot.mapping["x"]
-            
+        # Fetch scale from self.transforms (if available)
+        if xlim is True:
+            if not x:
+                x = plot.mapping["x"]
+
             try:
-                scale_x = self.scales[x]
+                scale_x = self.transforms[x]
             except KeyError:
                 plot = plot + p9.coords.coord_cartesian()
             else:
                 plot = plot + p9.scale_x_continuous(
-                    breaks=scale_x.major_ticks(start=xlim[0], end=xlim[1]),
-                    minor_breaks=scale_x.minor_ticks(start=xlim[0], end=xlim[1]),
-                    labels=scale_x.labels(start=xlim[0], end=xlim[1]),
+                    breaks=scale_x.major_ticks(),
+                    minor_breaks=scale_x.minor_ticks(),
+                    labels=scale_x.labels(),
                     expand=(0,0),
-                    limits=xlim
+                    limits=(scale_x.l_start, scale_x.l_end)
                 )
 
-        if ylim is not None:
-            y = plot.mapping["y"]
+        if ylim is True:
+            if not y:
+                y = plot.mapping["y"]
+
             try:
-                scale_y = self.scales[y]
+                scale_y = self.transforms[y]
             except KeyError:
                 plot = plot + p9.coords.coord_cartesian()
             else:
                 plot = plot + p9.scale_y_continuous(
-                    breaks=scale_y.major_ticks(start=ylim[0], end=ylim[1]),
-                    minor_breaks=scale_y.minor_ticks(start=ylim[0], end=ylim[1]),
-                    labels=scale_y.labels(start=ylim[0], end=ylim[1]),
+                    breaks=scale_y.major_ticks(),
+                    minor_breaks=scale_y.minor_ticks(),
+                    labels=scale_y.labels(),
                     expand=(0,0),
-                    limits=ylim
+                    limits=(scale_y.l_start, scale_y.l_end)
                 )
 
         return plot
@@ -556,6 +485,11 @@ class Plotter():
             elif len(levels) <= 10:
                 plot = plot + p9.scales.scale_color_manual(
                     values = self.tab10,
+                    na_value=self.color_na
+                )
+            elif len(levels) <= 20:
+                plot = plot + p9.scales.scale_color_manual(
+                    values = self.tab20,
                     na_value=self.color_na
                 )
             else:
@@ -626,6 +560,11 @@ class Plotter():
                     values = self.tab10,
                     na_value=self.fill_na
                 )
+            elif len(levels) <= 20:
+                plot = plot + p9.scales.scale_fill_manual(
+                    values = self.tab20,
+                    na_value=self.fill_na
+                )
             else:
                 # Use default
                 pass   
@@ -652,7 +591,7 @@ class Plotter():
         if "__pca_loadings" not in self.metadata:
             raise ValueError("please run .add_pca first. No loadings to add to the plot")
 
-        data = copy.deepcopy(self.metadata["__pca_loadings"][[x, y]])
+        data = self.metadata["__pca_loadings"][[x, y]].copy()
         data["__x"] = 0.0
         data["__y"] = 0.0
 
@@ -727,13 +666,12 @@ class Plotter():
             :param y: the y dimension
             :param c: the c dimension - used for color mapping
             :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
+            :param mask: when defined masks the 
         """
         self._plot_check(self.data, x, y, c, fill=None)
 
-        if c in [x, y]:
-            data = copy.deepcopy(self.data[[x, y]])
-        else:
-            data = copy.deepcopy(self.data[[x, y, c]])
+        params = pd.array([x,y,c]).dropna().unique()
+        data = self.data[params].copy()
 
         # Randomize data order
         data = data.sample(frac=1)
@@ -741,72 +679,210 @@ class Plotter():
         plot = self._plot_base(data, x, y, color=c)
         plot = self._plot_theme(plot)
         plot = self._plot_labels(plot, title=self.name)
-        plot = self._plot_scale(plot, xlim=self.scale_lim, ylim=self.scale_lim)
+        plot = self._plot_scale(plot, xlim=True, ylim=True)
         plot = self._plot_colorscale(plot, rescale=True, color_map=c_map)
-        plot = plot + p9.geom_point(na_rm=False)
+
+        if self.mask is not None:
+            if self.mask_type == "remove":
+                # mask data
+                data_mask = plot.data.loc[~self.mask]
+                plot = plot + p9.geom_point(
+                    data=data_mask,
+                    na_rm=False
+                )
+        
+            elif self.mask_type == "outline":
+                plot = plot + p9.geom_point(
+                    color="#000000",
+                    fill="#ffffff"
+                )
+                plot = plot + p9.geom_point(
+                    color="#00000000",
+                    fill="#ffffffff"
+                )
+                data_mask = data.loc[~self.mask]
+                plot = plot + p9.geom_point(
+                    data=data_mask
+                )
+            else:
+                raise ValueError(f"unknown mask_type {self.mask_type}, has to be one of ['remove', 'outline']")
+
+        else:
+            plot = plot + p9.geom_point(na_rm=False)
 
         return plot
 
-    def raster_pca(self, x: str, y: str, c: str, c_stat: str="density", bin_size: float=0.02, c_map: dict=None, loadings: bool=True, labels: bool=True) -> p9.ggplot:
+    def raster(self, x: str, y: str, bins: int=256) -> p9.ggplot:
+        """
+        Builds a density raster plot. This function is much more efficient then raster_special(c_stat="density"). 
+            :param x: the x dimension
+            :param y: the y dimension
+            :param bins: the number of bins per dimension
+        """
+        self._plot_check(self.data, x, y, color=None, fill=None)
+
+        # Get source data of unique params
+        params = pd.array([x,y]).dropna().unique()
+        data = self.data[params].copy()
+
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
+
+        # Calculate bins
+        data["__x_bin"] = self._bin(x, bins=bins)
+        data["__y_bin"] = self._bin(y, bins=bins)
+
+        # Count bins
+        data_count = data[["__x_bin", "__y_bin"]].value_counts(sort=False)
+        data_count = data_count.reset_index(name="__density")
+        data_count["__x_bin"] = data_count["__x_bin"].astype("float64")
+        data_count["__y_bin"] = data_count["__y_bin"].astype("float64")
+
+        # Make polygon
+        data_count["__x_max"] = data_count["__x_bin"] + ((self.transforms[x].l_end-self.transforms[x].l_start) / bins)
+        data_count["__y_max"] = data_count["__y_bin"] + ((self.transforms[y].l_end-self.transforms[y].l_start) / bins)
+
+        # build title
+        if self.name:
+            title = f"{self.name}: density"
+        else:
+            title = f"density"
+
+        # Build the plot
+        plot = self._plot_base(data_count, "__x_bin", "__y_bin", fill="__density")
+        plot = self._plot_theme(plot)
+        plot = self._plot_labels(plot, title=title)
+        plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
+        plot = self._plot_fillscale(plot, fill_map=None, rescale=False)
+        plot = plot + p9.geom_rect(
+            data=plot.data,
+            mapping=p9.aes(
+                xmin="__x_bin",
+                xmax="__x_max",
+                ymin="__y_bin",
+                ymax="__y_max"
+            )
+        )
+
+        return plot
+
+    def raster_pca(self, x: str, y: str, c: str=None, c_stat: str="mean", c_map: dict=None, bins: int=256, loadings: bool=True, labels: bool=True) -> p9.ggplot:
         """
         Convenience wrapper around raster plot for the plotting of pca plots. Make sure you have ran add_pca() first.
             :param x: the x dimension
             :param y: the y dimension
-            :param c: the c dimension - the parameter used for color mapping
-            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean", "blank", "sum"]
-            :param bin_size: effectively the size of the raster squares
+            :param c: the c dimension - the parameter used for color mapping; if None a density calculation is performed
+            :param c_stat: the c statistic to calculate, see raster_special() for options
             :param c_map: only used for categorical color parameters. Uses the c_map to map the levels
+            :param bins: the number of bins to rasterize into
             :param loadings: whether to plot the loadings
             :param labels: whether to plot the loading labels
         """
-        plot = self.raster(x, y, c, c_stat, bin_size, c_map)
+        if c is None:
+            plot = self.raster(
+                x=x, 
+                y=y,
+                bins=bins
+            )
+        else:
+            plot = self.raster_special(
+                x=x,
+                y=y,
+                c=c, 
+                c_stat=c_stat, 
+                c_map=c_map,
+                bins=bins
+            )
 
         if loadings:
             plot = self._plot_pca_loadings(plot, labels)
 
         return plot
 
-    def raster(self, x: str, y: str, c: str, c_stat: str="density", bin_size: int=4, c_map: dict=None) -> p9.ggplot:
+    def raster_special(self, x: str, y: str, c: str, c_stat: str="mean", bins: int=256, c_map: dict=None) -> p9.ggplot:
         """
-        Builds a raster plot of the specified data
+        Builds a raster plot using the c_stat(istic) to calculate the color-value
             :param x: the x dimension
             :param y: the y dimension
             :param c: the c dimension - the parameter used for color mapping
-            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean", "blank", "sum"]
-            :param bin_size: effectively the size of the raster squares
+            :param c_stat: the c statistic to calculate choose from ["max", "min", "sum", "mean", "median", "mode", "var", "std"]
+            :param bins: the number of bins per dimension
             :param c_map: only used for categorical color parameters. Uses the c_map to map the levels
+
+        Note: the statistics are calculated on the transformed (=channel) data.
         """
-        self._check_plot(self.data, x, y, c, fill=None)
+        self._plot_check(self.data, x, y, c, fill=None)
 
-        if c in [x, y]:
-            raise ValueError("the c dimension cannot be equal to the x or y dimension")
-
-        if c_stat not in ["density", "max", "min", "mean", "blank", "sum"]:
+        if c_stat not in ["max", "min", "sum", "mean", "median", "mode", "var", "std"]:
             raise ValueError(f"raster plotting has no implementation for c_stat '{c_stat}'")
 
-        # Correct source data
-        data = copy.deepcopy(self.data[[x, y, c]])
-        data = self._reduce(data, bin_size)
-        if c_stat == "density":
-            data = self._bin(data, x, y, z=None, condensor=_condensor_density)
-        elif c_stat == "max":
-            data = self._bin(data, x, y, z=None, condensor=_condensor_max)
+        # Get source data of unique params
+        params = pd.array([x,y,c]).dropna().unique()
+        data = self.data[params].copy()
+
+        # mask the data
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
+
+        # Calculate bins
+        data["__x_bin"] = self._bin(x, bins=bins)
+        data["__y_bin"] = self._bin(y, bins=bins)
+
+        data = data[["__x_bin","__y_bin",c]]
+
+        # Calculate per group
+        data_indexed = data.groupby(by=["__x_bin","__y_bin"], axis=0, sort=False, dropna=True)
+
+        if c_stat == "max":
+            c_name = f"__max({c})"
+            c_rescale = False
+            data_stat = data_indexed.max()
         elif c_stat == "min":
-            data = self._bin(data, x, y, z=None, condensor=_condensor_min)
-        elif c_stat == "mean":
-            data = self._bin(data, x, y, z=None, condensor=_condensor_mean)
-        elif c_stat == "blank":
-            data = self._bin(data, x, y, z=None, condensor=_condensor_blank)
+            c_name = f"__min({c})"
+            c_rescale = False
+            data_stat = data_indexed.min()
         elif c_stat == "sum":
-            data = self._bin(data, x, y, z=None, condensor=_condensor_sum)
+            c_name = f"__sum({c})"
+            c_rescale = False
+            data_stat = data_indexed.sum()
+        elif c_stat == "mean":
+            c_name = f"__mean({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "median":
+            c_name = f"__median({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "mode":
+            c_name = f"__mode({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "var":
+            c_name = f"__var({c})"
+            c_rescale = True
+            data_stat = data_indexed.std()
+        elif c_stat == "std":
+            c_name = f"__std({c})"
+            c_rescale = True
+            data_stat = data_indexed.std()
+        else:
+            raise ValueError(f"'{c_stat}' c_stat is an unknown operation")
 
-        data["__xmax"] = data[x] + 1
-        data["__ymax"] = data[y] + 1
+        # Remove multi-index
+        data_stat.columns = [c_name]
+        data_stat = data_stat.reset_index()
+        data_stat = data_stat.loc[~data_stat[c_name].isna()]
 
-        # calculate new limits
-        limits = copy.deepcopy(self.scale_lim)
-        limits[0] = limits[0] / bin_size
-        limits[1] = limits[1] / bin_size
+        data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
+        data_stat["__y_bin"] = data_stat["__y_bin"].astype("float64")
+
+        # Make polygon
+        data_stat["__x_max"] = data_stat["__x_bin"] + ((self.transforms[x].l_end-self.transforms[x].l_start) / bins)
+        data_stat["__y_max"] = data_stat["__y_bin"] + ((self.transforms[y].l_end-self.transforms[y].l_start) / bins)
 
         # build title
         if self.name:
@@ -815,33 +891,35 @@ class Plotter():
             title = f"{c_stat}({c})"
 
         # Build the plot
-        plot = self._plot_base(data, x, y, fill=c)
+        plot = self._plot_base(data_stat, "__x_bin", "__y_bin", fill=c_name)
         plot = self._plot_theme(plot)
         plot = self._plot_labels(plot, title=title)
-        plot = self._plot_scale(plot, xlim=limits, ylim=limits)
-        plot = self._plot_fillscale(plot, rescale=False, fill_map=c_map)
+        plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
+        plot = self._plot_fillscale(plot, rescale=c_rescale, fill_map=c_map)
         plot = plot + p9.geom_rect(
-            data=plot.data,
+            data=data_stat,
             mapping=p9.aes(
-                xmin=x,
-                xmax="__xmax",
-                ymin=y,
-                ymax="__ymax"
+                xmin="__x_bin",
+                xmax="__x_max",
+                ymin="__y_bin",
+                ymax="__y_max"
             )
         )
 
         return plot
 
-    def raster_3d(self, x: str, y: str, z: str, c: str, c_stat: str="density", xy_bin: int=4, z_bin: int=64) -> List[p9.ggplot]:
+    def raster_special_3d(self, x: str, y: str, z: str, c: str=None, c_stat: str="mean", xy_bins: int=256, z_bins: int=8) -> List[p9.ggplot]:
         """
-        Creates a z-stack of x-y plots with z_start fill. If saved as gif give a 3dimensional representation 
+        Creates a z-stack of x-y plots with z_start fill. If saved as gif gives a 3dimensional representation 
             :param x: the x dimension
             :param y: the y dimension
             :param z: the z dimension - the parameter used for z-stack formation
-            :param c: the c(olor) dimension - the parameter used for color mapping
-            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean", "blank", "sum"]
-            :param xy_bin: effectively the size of the raster squares, argument to _reduce()
-            :param z_bin: determines the z-stack size, argument to _reduce()
+            :param c: the c(olor) dimension - the parameter used for color mapping, if None calculates the density
+            :param c_stat: the c statistic to calculate, choose from ["max", "min", "sum", "mean", "median", "mode", "var", "std"]
+            :param xy_bins: the number of bins in the xy dimension
+            :param z_bins: the number of bins in the z dimension
+
+        Note: the statistics are calculated on the transformed (=channel) data.
         """
         self._plot_check(self.data, x, y, c, fill=None)
 
@@ -849,65 +927,127 @@ class Plotter():
             raise ValueError(f"z '{z}' does not specify columns in .data")
 
         if not pd.api.types.is_numeric_dtype(self.data[z]):
-            raise ValueError(f"z '{z}' must be a numeric dtype to allow for raster_3d plotting")
+            raise ValueError(f"z '{z}' must be a numeric dtype")
         
-        if c_stat not in ["density", "max", "min", "mean", "blank", "sum"]:
+        if c_stat not in ["max", "min", "sum", "mean", "median", "mode", "var", "std"]:
             raise ValueError(f"raster plotting has no implementation for c_stat '{c_stat}'")
 
-        # Correct source data
-        data = copy.deepcopy(self.data[[x, y, z, c]])
+        # Get source data of unique params
+        params = pd.array([x,y,z,c]).dropna().unique()
+        data = self.data[params].copy()
 
-        # Custom reducing:
-        data[x] = data[x].floordiv(xy_bin)
-        data[y] = data[y].floordiv(xy_bin)
-        data[z] = data[z].floordiv(z_bin)
+        # mask the data
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
 
-        # Calculate new limits
-        limits = copy.deepcopy(self.scale_lim)
-        limits[0] = limits[0] // xy_bin
-        limits[1] = limits[1] // xy_bin
+        # Cut into bins
+        data["__x_bin"] = self._bin(x, bins=xy_bins)
+        data["__y_bin"] = self._bin(y, bins=xy_bins)
+        data["__z_bin"] = self._bin(z, bins=z_bins)
 
-        # 3 dimensional binning
-        if c_stat == "density":
-            data = self._bin(data, x, y, z=z, condensor=_condensor_density)
+        if c is None:
+            data = data[["__x_bin", "__y_bin", "__z_bin"]]
+        else:
+            data = data[["__x_bin", "__y_bin", "__z_bin", c]]
+
+        # Calculate per group
+        data_indexed = data.groupby(by=["__x_bin","__y_bin", "__z_bin"], axis=0, sort=False, dropna=True)
+
+        if c is None:
+            c_name = "__density"
+            c_rescale = True
+            data_stat = data.value_counts(sort=False)
+            data_stat.name = c_name
         elif c_stat == "max":
-            data = self._bin(data, x, y, z=z, condensor=_condensor_max)
+            c_name = f"__max({c})"
+            c_rescale = False
+            data_stat = data_indexed.max()
         elif c_stat == "min":
-            data = self._bin(data, x, y, z=z, condensor=_condensor_min)
-        elif c_stat == "mean":
-            data = self._bin(data, x, y, z=z, condensor=_condensor_mean)
-        elif c_stat == "blank":
-            data = self._bin(data, x, y, z=z, condensor=_condensor_blank)
+            c_name = f"__min({c})"
+            c_rescale = False
+            data_stat = data_indexed.min()
         elif c_stat == "sum":
-            data = self._bin(data, x, y, z=z, condensor=_condensor_sum)
-        
-        # Add necessary rect information
-        data["__xmax"] = data[x] + 1
-        data["__ymax"] = data[y] + 1
+            c_name = f"__sum({c})"
+            c_rescale = False
+            data_stat = data_indexed.sum()
+        elif c_stat == "mean":
+            c_name = f"__mean({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "median":
+            c_name = f"__median({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "mode":
+            c_name = f"__mode({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "var":
+            c_name = f"__var({c})"
+            c_rescale = True
+            data_stat = data_indexed.std()
+        elif c_stat == "std":
+            c_name = f"__std({c})"
+            c_rescale = True
+            data_stat = data_indexed.std()
+        else:
+            raise ValueError(f"'{c_stat}' c_stat is an unknown operation")
 
+        # Remove multi-index
+        data_stat.columns = [c_name]
+        data_stat = data_stat.reset_index()
+        data_stat = data_stat.loc[~data_stat[c_name].isna()]
+
+        data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
+        data_stat["__y_bin"] = data_stat["__y_bin"].astype("float64")
+        data_stat["__z_bin"] = data_stat["__z_bin"].astype("float64")
+
+        # Make polygon
+        data_stat["__x_max"] = data_stat["__x_bin"] + ((self.transforms[x].l_end-self.transforms[x].l_start) / xy_bins)
+        data_stat["__y_max"] = data_stat["__y_bin"] + ((self.transforms[y].l_end-self.transforms[y].l_start) / xy_bins)
+        #data_stat["__z_max"] = data_stat["__z_bin"] + ((self.transforms[z].l_end-self.transforms[z].l_start) / z_bins)
+        
         # Calculate color scale
-        quantiles = data[c].quantile([0.0, 0.02, 0.98, 1.0])
-        if True:
+        quantiles = data_stat[c_name].quantile([0.0, 0.02, 0.98, 1.0])
+        if c_rescale:
             min_color = quantiles[0.02]
             max_color = quantiles[0.98]
         else:
             min_color = quantiles[0.0]
             max_color = quantiles[1.0]
 
+        # Get x&y name
+        try:
+            x_name = self.labels[x]
+        except KeyError:
+            x_name = x
+        try:
+            y_name = self.labels[y]
+        except KeyError:
+            y_name = y
+
         # Group based on z
-        z_stack: List[pd.DataFrame] = [y for x, y in data.groupby(z, as_index=False)]
+        z_stack: List[pd.DataFrame] = [y for x, y in data_stat.groupby("__z_bin", as_index=False)]
         plots: List[p9.ggplot] = []
         for i, frame in enumerate(z_stack):
             # build title
             if self.name:
-                title = f"{self.name}\n{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
+                if c is None:
+                    title = f"{self.name}\n{z}[{i+1}/{len(z_stack)}] : density"
+                else:
+                    title = f"{self.name}\n{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
             else:
-                title = f"{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
+                if c is None:
+                    title = f"{z}[{i+1}/{len(z_stack)}] : density"
+                else:
+                    title = f"{z}[{i+1}/{len(z_stack)}] : {c_stat}({c})"
 
-            plot = self._plot_base(frame, x, y, fill=c)
+            plot = self._plot_base(frame, "__x_bin", "__y_bin", fill=c_name)
             plot = self._plot_theme(plot)
-            plot = self._plot_labels(plot, title=title)
-            plot = self._plot_scale(plot, xlim=limits, ylim=limits)
+            plot = self._plot_labels(plot, title=title, x=x_name, y=y_name)
+            plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
             # force equal colorscale between frames by custom setting of limits
             plot = plot + p9.scales.scale_fill_cmap(
                 cmap_name=self.fill_map,
@@ -919,24 +1059,25 @@ class Plotter():
             )
             plot = plot + p9.geom_rect(
                 p9.aes(
-                    xmin=x,
-                    xmax="__xmax",
-                    ymin=y,
-                    ymax="__ymax"
+                    xmin="__x_bin",
+                    xmax="__x_max",
+                    ymin="__y_bin",
+                    ymax="__y_max"
                 )
             )
             plots.append(plot)
 
         return plots
 
-    def show_3d(self, x: str, y: str, z: str, c: str=None, c_stat: str="mean", bin_size: int=4, c_map: dict=None) -> None:
+    def show_3d(self, x: str, y: str, z: str, c: str=None, c_stat: str="mean", bins: int=128, c_map: dict=None) -> None:
         """
         Creates a 3dimensional matplotlib figure object with the correct data and axis
             :param x: the x dimension
             :param y: the y dimension
-            :param c: the c dimension - used for color mapping
-            :param c_stat: the c statistic to calculate choose from ["density", "max", "min", "mean", "blank", "sum"]
-            :param bin_size: effectively the size of the raster squares. by bin_size >12 you will start loosing accuracy on the scales.
+            :param z: the z dimension
+            :param c: the c dimension - used for color mapping. If None will represent the event density
+            :param c_stat: the c statistic to calculate, choose from ["max", "min", "sum", "mean", "median", "mode", "var", "std"]
+            :param bins: the number of bins per xyz dimension.
             :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
         """
         self._plot_check(self.data, x, y, c, fill=None)
@@ -946,55 +1087,87 @@ class Plotter():
         if not pd.api.types.is_numeric_dtype(self.data[z]):
             raise ValueError(f"z '{z}' must be a numeric dtype")
         
-        if c_stat not in ["density", "max", "min", "mean", "blank"]:
+        if c_stat not in ["max", "min", "sum", "mean", "median", "mode", "var", "std"]:
             raise ValueError(f"binning has no implementation for c_stat '{c_stat}'")
 
-        # Data manipulation here
-        # Correct source data
-        if not c:
-            data = copy.deepcopy(self.data[[x, y, z]])
-        elif c in (x,y,z):
-            data = copy.deepcopy(self.data[[x, y, z]])
+        # Get all data from unique parameters
+        params = pd.array([x,y,z,c]).dropna().unique()
+        data = self.data[params].copy()
+
+        # mask the data
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
+
+        # Cut into bins
+        data["__x_bin"] = self._bin(x, bins=bins)
+        data["__y_bin"] = self._bin(y, bins=bins)
+        data["__z_bin"] = self._bin(z, bins=bins)
+
+        if c is None:
+            data = data[["__x_bin", "__y_bin", "__z_bin"]]
         else:
-            data = copy.deepcopy(self.data[[x, y, z, c]])
+            data = data[["__x_bin", "__y_bin", "__z_bin", c]]
 
-        data = self._reduce(data, bin_size)
+        # Calculate per group
+        data_indexed = data.groupby(by=["__x_bin","__y_bin", "__z_bin"], axis=0, sort=False, dropna=True)
 
-        # Calculate new limits
-        limits = copy.deepcopy(self.scale_lim)
-        limits[0] = limits[0] // bin_size
-        limits[1] = limits[1] // bin_size
-
-        # 3 dimensional binning
-        if c_stat == "density":
-            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_density)
+        if c is None:
+            c_name = "__density"
+            c_rescale = True
+            data_stat = data.value_counts(sort=False)
+            data_stat.name = c_name
         elif c_stat == "max":
-            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_max)
+            c_name = f"__max({c})"
+            c_rescale = False
+            data_stat = data_indexed.max()
         elif c_stat == "min":
-            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_min)
-        elif c_stat == "mean":
-            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_mean)
-        elif c_stat == "blank":
-            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_blank)
+            c_name = f"__min({c})"
+            c_rescale = False
+            data_stat = data_indexed.min()
         elif c_stat == "sum":
-            data = self._bin(data, x=x, y=y, z=z, condensor=_condensor_sum)
-
-        # work-around to allow for the plotting of x,y,z defined colors
-        if c in (x,y,z):
-            data["__c"] = data[c]
-            c = "__c"
-            cmap = "nipy_spectral"
-        elif not c:
-            c = "__c"
-            data["__c"] = data[x]
-            cmap = "nipy_spectral"
+            c_name = f"__sum({c})"
+            c_rescale = False
+            data_stat = data_indexed.sum()
+        elif c_stat == "mean":
+            c_name = f"__mean({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "median":
+            c_name = f"__median({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "mode":
+            c_name = f"__mode({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "var":
+            c_name = f"__var({c})"
+            c_rescale = True
+            data_stat = data_indexed.std()
+        elif c_stat == "std":
+            c_name = f"__std({c})"
+            c_rescale = True
+            data_stat = data_indexed.std()
         else:
-            cmap = "viridis"
+            raise ValueError(f"'{c_stat}' c_stat is an unknown operation")
+
+        # Remove multi-index
+        data_stat.columns = [c_name]
+        data_stat = data_stat.reset_index()
+        data_stat = data_stat.loc[~data_stat[c_name].isna()]
+
+        data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
+        data_stat["__y_bin"] = data_stat["__y_bin"].astype("float64")
+        data_stat["__z_bin"] = data_stat["__z_bin"].astype("float64")
+
+        cmap = "nipy_spectral"
 
         # manually set colors to allow for proper rescaling
-        if pd.api.types.is_numeric_dtype(data[c]):
-            quantiles = data[c].quantile([0.0, 0.02, 0.98, 1.0])
-            if True:
+        if pd.api.types.is_numeric_dtype(data_stat[c_name]):
+            quantiles = data_stat[c_name].quantile([0.0, 0.02, 0.98, 1.0])
+            if c_rescale:
                 min_color = quantiles[0.02]
                 max_color = quantiles[0.98]
             else:
@@ -1003,11 +1176,11 @@ class Plotter():
             ratio_color = 1 / (max_color - min_color)
 
             colormap = plt.get_cmap(cmap)
-            data[c] = data[c].apply(lambda x: (x - min_color) * ratio_color)
-            data[c] = data[c].apply(lambda x: colormap(0 if x < 0 else (0.9999999 if x >= 1 else x), alpha=1))
-        elif pd.api.types.is_string_dtype(data[c]):
+            data_stat[c_name] = data_stat[c_name].apply(lambda x: (x - min_color) * ratio_color)
+            data_stat[c_name] = data_stat[c_name].apply(lambda x: colormap(0 if x < 0 else (0.9999999 if x >= 1 else x), alpha=1))
+        elif pd.api.types.is_string_dtype(data[c_name]):
 
-            levels = data[c].unique()
+            levels = data_stat[c_name].unique()
             levels = levels[~pd.isnull(levels)]
             if c_map:
                 # Check if colormap covers all cases
@@ -1015,30 +1188,30 @@ class Plotter():
                     if level not in c_map:
                         raise ValueError(f"level '{level}' undefined in c_map")
                 c_map["nan"] = self.color_na
-                data[c] = data[c].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
+                data_stat[c_name] = data_stat[c_name].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
 
             elif len(levels) <= 10:
                 c_map = plt.get_cmap("tab10")
                 c_map = dict(zip(levels, c_map.colors[:len(levels)]))
                 c_map["nan"] = self.color_na
-                data[c] = data[c].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
+                data_stat[c_name] = data_stat[c_name].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
                
             else:
                 # Use default
                 pass
 
         # Approximate dot size
-        dot_size = bin_size //4
+        dot_size = (self.transforms[x].l_end - self.transforms[x].l_start) / bins
         dot_size = 1 if dot_size < 1 else dot_size
 
         # construct matplotlib figure and axes objects
         figure = plt.figure(figsize=(12.8, 9.6))
         axes = figure.add_subplot(111, projection="3d", facecolor="#EEEEEEFF")
         axes.scatter(
-            xs=data[x],
-            ys=data[y],
-            zs=data[z],
-            c=data[c],
+            xs=data_stat["__x_bin"],
+            ys=data_stat["__y_bin"],
+            zs=data_stat["__z_bin"],
+            c=data_stat[c_name],
             zdir="y",
             depthshade=True,    # dont turn off - bug in matplotlib
             marker="s",
@@ -1047,56 +1220,65 @@ class Plotter():
         )
 
         # Set axis ticks / scale / labels
-        axes.set_xlim(limits)
-        axes.set_ylim(limits)
-        axes.set_zlim(limits)
+        axes.set_xlim((self.transforms[x].l_start, self.transforms[x].l_end))
+        axes.set_ylim((self.transforms[y].l_start, self.transforms[y].l_end))
+        axes.set_zlim((self.transforms[z].l_start, self.transforms[z].l_end))
 
         try:
-            axis_scale = self.scales[x]
+            axis_transform = self.transforms[x]
         except ValueError:
             pass
         else:
             # so apparently a specific plot-x can only have a single label
-            major_ticks = np.array(axis_scale.major_ticks(limits[0], limits[1]))
-            unique = np.unique(major_ticks, return_index=True)[1]
-            labels = np.array(axis_scale.labels(limits[0], limits[1]))
-            axes.set_xticks(ticks=major_ticks[unique], minor=False)
-            axes.set_xticklabels(labels=labels[unique])
-            axes.set_xticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
-        axes.set_xlabel(self.labels[x])
+            major_ticks = np.array(axis_transform.major_ticks())
+            labels = np.array(axis_transform.labels())
+            axes.set_xticks(ticks=major_ticks, minor=False)
+            axes.set_xticklabels(labels=labels)
+            axes.set_xticks(ticks=axis_transform.minor_ticks(), minor=True)
+        try:
+            axes.set_xlabel(self.labels[x])
+        except KeyError:
+            axes.set_xlabel(x)
         
         # Somehow y <-> z axis are swapped, correct for this
         try:
-            axis_scale = self.scales[y]
+            axis_transform = self.transforms[y]
         except ValueError:
             pass
         else:
-            major_ticks = np.array(axis_scale.major_ticks(limits[0], limits[1]))
+            major_ticks = np.array(axis_transform.major_ticks())
             unique = np.unique(major_ticks, return_index=True)[1]
-            labels = np.array(axis_scale.labels(limits[0], limits[1]))
+            labels = np.array(axis_transform.labels())
             axes.set_zticks(ticks=major_ticks[unique], minor=False)
             axes.set_zticklabels(labels=labels[unique])
-            axes.set_zticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
-        axes.set_zlabel(self.labels[y])
+            axes.set_zticks(ticks=axis_transform.minor_ticks(), minor=True)
+        try:
+            axes.set_zlabel(self.labels[y])
+        except KeyError:
+            axes.set_zlabel(y)
         
         try:
-            axis_scale = self.scales[z]
+            axis_transform = self.transforms[z]
         except ValueError:
             pass
         else:
-            major_ticks = np.array(axis_scale.major_ticks(limits[0], limits[1]))
+            major_ticks = np.array(axis_transform.major_ticks())
             unique = np.unique(major_ticks, return_index=True)[1]
-            labels = np.array(axis_scale.labels(limits[0], limits[1]))
+            labels = np.array(axis_transform.labels())
             axes.set_yticks(ticks=major_ticks[unique], minor=False)
             axes.set_yticklabels(labels=labels[unique])
-            axes.set_yticks(ticks=axis_scale.minor_ticks(limits[0], limits[1]), minor=True)
-        axes.set_ylabel(self.labels[z])
+            axes.set_yticks(ticks=axis_transform.minor_ticks(), minor=True)
+        try:
+            axes.set_ylabel(self.labels[z])
+        except KeyError:
+            axes.set_ylabel(z)
 
         # theming
         if self.name:
             axes.set_title(self.name)
         
-        axes.grid(False)
+        axes.grid(True, which="major")
+        axes.grid(False, which="minor")
         #dont think these parameters work... :(
         #axes.set_tick_params(which="major", direction="out", width=2.0, lenght=4.0)
         #axes.set_tick_params(which="minor", direction="out", width=1.0, length=2.0)
@@ -1104,407 +1286,422 @@ class Plotter():
        
         plt.show()
 
-    def correlation(self, x: str, y: str, y_stat: str="mean", group: str=None, summarize: bool=True, bin_size: int=10, min_events: int=1) -> p9.ggplot:
+    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, min_events: int=4) -> p9.ggplot:
         """
         Plots a correlation line graph of x versus y. If group is defined, will make a line per level in group
             :param x: the x dimension
             :param y: the y dimension
-            :param y_stat: the condensor the apply to the y dimension, should be in ["density", "max", "min", "mean", "geomean", "blank", "sum"]
-            :param group: (optional) which groups to split the data into, and plot separately
+            :param c: (optional) which groups to split the data into, and plot separately
+            :param y_stat: the condensor the apply to the y dimension, choose from ["lowess", "max", "min", "sum", "mean", "median", "mode", "var", "std"]
             :param summarize: whether to summarize the data into a mean with standard deviations
-            :param bin_size: the bin_size of x
+            :param bins: the number of bins in the x dimension
             :param min_events: the minimum amount of events in a bin
-        """
-        self._plot_check(self.data, x, y, color=None, fill=None)
 
-        if y_stat not in ["density", "max", "min", "mean", "geomean", "blank", "sum"]:
-            raise ValueError(f"line plotting has no implementation for y_stat '{y_stat}'")
+        Note: the statistics are calculated on the transformed (=channel) data.
+        """
+        self._plot_check(self.data, x, y, color=c, fill=None)
+
+        if y_stat not in ["lowess", "max", "min", "sum", "mean", "median", "mode", "var", "std"]:
+            raise ValueError(f"correlation plotting has no implementation for y_stat '{y_stat}'")
 
         if min_events < 1:
             raise ValueError(f"minimum amount of events should be 1 or more, not '{min_events}'")
 
-        if summarize and not group:
+        if summarize and c is None:
             raise ValueError("cannot summarize if the data is not grouped")
 
-        if group:
-            data = copy.deepcopy(self.data[[x, y, group]])
-        else:
-            data = copy.deepcopy(self.data[[x, y]])
+        # Get source data of unique params
+        params = pd.array([x, y, c]).dropna().unique()
+        data = self.data[params].copy()
 
-        # Build the plot (so all the checks are run and the data is releveled)
-        if group:
-            plot = self._plot_base(data, x, y, group)
-        else:
-            plot = self._plot_base(data, x, y)
-
-        data = plot.data
+        # mask the data
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
         
-        # reduce resolution
-        data[x] = self._reduce(data[[x]], bin_size)
+        # Calculate bins
+        try:
+            trans_x = self.transforms[x]
+        except KeyError:
+            raise KeyError(f"no transform available for '{x}', unknown local limits") from None
+        bins_x = np.linspace(trans_x.l_start, trans_x.l_end, num=bins+1, endpoint=True)
+        bins_x = list(bins_x)
+    
+        bin_size = (trans_x.l_end - trans_x.l_start) / bins
+        bin_size *= 0.5
 
-        # now group and apply transforms
-        if group:
-            data_group = {x:y for x, y in data.groupby(group)}
+        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end - bin_size, num=bins, endpoint=False)
+        bins_x_names = list(bins_x_names)
+
+        data["__x_bin"] = pd.cut(
+            data[x], 
+            bins_x,
+            labels=bins_x_names,
+            ordered=False, 
+            include_lowest=True
+        )
+
+        # Remove useless x information
+        if c is None:
+            data = data[["__x_bin", y]]
+            data_indexed = data.groupby(by=["__x_bin"], axis=0, sort=False, dropna=True)
+            # filter on minimum events
+            if min_events > 1:
+                data_indexed = data_indexed.filter(lambda x: len(x) > min_events)
+                data_indexed = data_indexed.groupby(by=["__x_bin"], axis=0, sort=False, dropna=True)
         else:
-            data_group = {"all":data}
+            data = data[["__x_bin", y, c]]
+            data_indexed = data.groupby(by=[c, "__x_bin"], axis=0, sort=False, dropna=True)
+            if min_events > 1:
+                data_indexed = data_indexed.filter(lambda x: len(x) > min_events)
+                data_indexed = data_indexed.groupby(by=[c, "__x_bin"], axis=0, sort=False, dropna=True)
+        
+        # calculate stats
+        if y_stat == "max":
+            y_name = f"__max({y})"
+            data_stat = data_indexed.max()
+        elif y_stat == "min":
+            y_name = f"__min({y})"
+            data_stat = data_indexed.min()
+        elif y_stat == "sum":
+            y_name = f"__sum({y})"
+            data_stat = data_indexed.sum()
+        elif y_stat == "mean":
+            y_name = f"__mean({y})"
+            data_stat = data_indexed.mean()
+        elif y_stat == "median":
+            y_name = f"__median({y})"
+            data_stat = data_indexed.mean()
+        elif y_stat == "mode":
+            y_name = f"__mode({y})"
+            data_stat = data_indexed.mean()
+        elif y_stat == "var":
+            y_name = f"__var({y})"
+            data_stat = data_indexed.std()
+        elif y_stat == "std":
+            y_name = f"__std({y})"
+            data_stat = data_indexed.std()
+        elif y_stat == "lowess":
+            y_name = f"__lowess({y})"
+            raise NotImplementedError("lowess smoothing yet to be implemented")
+        else:
+            raise ValueError(f"'{y_stat}' y_stat is an unknown operation")
 
-        # Calculate the amount of events per bin
-        if min_events > 1:
-            density_group = {}
-            for name in data_group:
-                data = data_group[name]
-                density_group[name] = self._bin(data, x, y=None, z=None, condensor=_condensor_density)
+        # Remove multi-index
+        data_stat.columns = [y_name]
+        data_stat = data_stat.reset_index()
+        data_stat = data_stat.loc[~data_stat[y_name].isna()]
 
-        # Apply condensing
-        for name in data_group:
-            data = data_group[name]
-            if y_stat == "density":
-                data_group[name] = self._bin(data, x, y=None, z=None, condensor=_condensor_density)
-            elif y_stat == "max":
-                data_group[name] = self._bin(data, x, y=None, z=None, condensor=_condensor_max)
-            elif y_stat == "min":
-                data_group[name] = self._bin(data, x, y=None, z=None, condensor=_condensor_min)
-            elif y_stat == "mean":
-                data_group[name] = self._bin(data, x, y=None, z=None, condensor=_condensor_mean)
-            elif y_stat == "geomean":
-                data_group[name] = self._bin(data, x, y=None, z=None, condensor=_condensor_geomean)
-            elif y_stat == "blank":
-                data_group[name] = self._bin(data, x, y=None, z=None, condensor=_condensor_blank)
-            elif y_stat == "sum":
-                data_group[name] = self._bin(data, x, y=None, z=None, condensor=_condensor_sum)
+        data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
 
-        # Filter events based on min_events
-        if min_events > 1:
-            for name in data_group:
-                data_group[name] = data_group[name].loc[density_group[name][y] >= min_events]
-
-        # calculate new limits
-        limits_x = copy.deepcopy(self.scale_lim)
-        limits_x[0] = limits_x[0] / bin_size
-        limits_x[1] = limits_x[1] / bin_size
-
+        #########
         # build title
         if self.name:
             title = f"{self.name}: {y_stat}({y})"
         else:
             title = f"{y_stat}({y})"
-        
+
+        # Build the plot
+        plot = self._plot_base(data_stat, "__x_bin", y_name, c)       
         plot = self._plot_theme(plot)
-        plot = self._plot_labels(plot, title=title)
-        plot += p9.labs(
-            y=f"{y_stat}({y})"
-        )
-        plot = self._plot_scale(plot, xlim=limits_x, ylim=self.scale_lim)
+        plot = self._plot_labels(plot, title=title, x=x, y=f"{y_stat}({y})")
+        plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
 
         if summarize:
             # Calculate mean and standard-deviation
-            # Set index to x-axis
-            for name in data_group:
-                data_group[name].index = data_group[name][x]
-            
-            # make dataframe of all y-values
-            names_group = list(data_group.keys())
-            data = copy.deepcopy(data_group[names_group[0]][[y]])
-            data.columns = [names_group[0]]
-            for i in range(1, len(names_group)):
-                name = names_group[i]
-                data[name] = data_group[name][y]
-            
-            # calculate y-mean and sd
-            mean = data.mean(axis="columns", skipna=True)
-            sd = data.std(axis="columns", skipna=True)
-            data["__x"] = data.index
+            data_indexed = data_stat.groupby(by="__x_bin", axis=0, sort=False)
+
+            data_sum = data_indexed.mean()
+            data_sum.columns = ["__mean"]
+            data_sum["__std"] = data_indexed.std()
+            # remove NaNs (std of 1 value will return NaN)
+            data_sum["__std"][pd.isnull(data_sum["__std"])] = 0.0
+            data_sum.sort_index(inplace=True)
+            data_sum["__x_bin"] = data_sum.index
 
             # statistics
-            data_melt = data.melt(id_vars="__x")
-            data_melt = data_melt.loc[~pd.isnull(data_melt["value"])]
-            r_value, p_value = scipy.stats.pearsonr(data_melt["__x"], data_melt["value"])
+            r_value, p_value = scipy.stats.pearsonr(data_sum["__x_bin"], data_sum["__mean"])
             title += f": r={r_value:.3f}, p={p_value:.4f}"
 
             # Add plotting parameters
-            data["__mean"] = mean
-            data["__+sd"] = data["__mean"] + sd
-            data["__-sd"] = data["__mean"] - sd
+            data_sum["__+std"] = data_sum["__mean"] + data_sum["__std"]
+            data_sum["__-std"] = data_sum["__mean"] - data_sum["__std"]
 
             # Transform data into expected format for plotting. 
             data_group = {}
-            data_group["mean"] = data[["__x", "__mean"]].copy()
-            data_group["mean"].columns = [x, y]
+            data_group["mean"] = data_sum[["__x_bin", "__mean"]].copy()
+            data_group["mean"].columns = ["__x_bin", y_name]
             data_group["mean"]["__stat"] = "mean"
             data_group["mean"].reset_index(drop=True, inplace=True)
-            data_group["+sd"] = data[["__x", "__+sd"]].copy()
-            data_group["+sd"].columns = [x, y]
-            data_group["+sd"]["__stat"] = "+sd"
-            data_group["+sd"].reset_index(drop=True, inplace=True)
-            data_group["-sd"] = data[["__x", "__-sd"]].copy()
-            data_group["-sd"].columns = [x, y]
-            data_group["-sd"]["__stat"] = "-sd"
-            data_group["-sd"].reset_index(drop=True, inplace=True)
+    
+            data_group["+std"] = data_sum[["__x_bin", "__+std"]].copy()
+            data_group["+std"].columns = ["__x_bin", y_name]
+            data_group["+std"]["__stat"] = "+std"
+            data_group["+std"].reset_index(drop=True, inplace=True)
+            # remove NaNs - caused by 
+
+            data_group["-std"] = data_sum[["__x_bin", "__-std"]].copy()
+            data_group["-std"].columns = ["__x_bin", y_name]
+            data_group["-std"]["__stat"] = "-std"
+            data_group["-std"].reset_index(drop=True, inplace=True)
 
             # Get polygon coordinates
-            polygon_x = data_group["+sd"][x].copy()
-            polygon_x = pd.concat([polygon_x, data_group["-sd"][x][::-1]].copy())
-            polygon_y = data_group["+sd"][y].copy()
-            polygon_y = pd.concat([polygon_y, data_group["-sd"][y][::-1]].copy())
+            polygon_x = data_group["+std"]["__x_bin"].copy()
+            polygon_x = pd.concat([polygon_x, data_group["-std"]["__x_bin"][::-1]].copy())
+            polygon_y = data_group["+std"][y_name].copy()
+            polygon_y = pd.concat([polygon_y, data_group["-std"][y_name][::-1]].copy())
 
             polygon = pd.concat([polygon_x, polygon_y], axis="columns")
 
+            # Construct plot
             plot = plot + p9.ggtitle(
                 title
             )
 
             plot = plot + p9.scales.scale_color_manual(
-                values={"mean":"#F00000", "+sd":"#000000", "-sd":"#000000"}, 
+                values={"mean":"#f00000", "+std":"#000000", "-std":"#000000"}, 
                 na_value=self.color_na
             )
-            plot += p9.labs(color="statistic")
+            plot += p9.labs(color=f"mean±std({y_stat}({y}))")
 
             plot += p9.geom_polygon(
                 data=polygon,
-                mapping=p9.aes(x=x, y=y),
+                mapping=p9.aes(x="__x_bin", y=y_name),
                 color=None,
-                fill="#C0C0C0",
+                fill="#c0c0c0",
                 alpha=0.5,
                 inherit_aes=False
             )
 
-            for name in data_group:
+            for name in ["+std", "-std", "mean"]:
                 data = data_group[name]
-                data.sort_values(x)
+                data.sort_values("__x_bin")
                 plot += p9.geom_path(
                     data=data,
-                    mapping=p9.aes(x=x, y=y, color="__stat"),
+                    mapping=p9.aes(x="__x_bin", y=y_name, color="__stat"),
                     inherit_aes=False,
                     size=1.0
                 )
 
         else:
-            if group:
+            if c:
                 plot = self._plot_colorscale(plot)
             
-                for name in data_group:
-                    data = data_group[name]
-                    data.sort_values(x)
+                data_grouped = {x:y for x, y in data_stat.groupby(by=c, sort=False)}
+
+                for name in data_grouped:
+                    data = data_grouped[name]
+                    data.sort_values(by="__x_bin", inplace=True)
                     plot += p9.geom_path(
                         data=data,
-                        mapping=p9.aes(x=x, y=y, color=group),
+                        mapping=p9.aes(x="__x_bin", y=y_name, color=c),
                         inherit_aes=False,
                         size=1.0
                     )
             else:
+                data_stat.sort_values(by="__x_bin", inplace=True)
                 plot += p9.geom_path(
-                    data=data_group[list(data_group.keys())[0]],
-                    mapping=p9.aes(x=x, y=y),
+                    data=data_stat,
+                    mapping=p9.aes(x="__x_bin", y=y_name),
                     inherit_aes=False
                 )
 
         return plot
 
-    def histogram(self, x: str, c: str=None, c_map: dict=None) -> p9.ggplot:
+    def histogram(self, x: str, c: str=None, c_map: dict=None, y_stat: str="fraction", bins: int=256) -> p9.ggplot:
         """
         Creates a ggplot dotplot object with the correct data and axis
             :param x: the x dimension
-            :param c: (optional) the color dimension (must be factor)
+            :param c: (optional) the color dimension; the histogram will be split into multiple lines to represent the c dimension
             :param c_map: (optional) uses the c_map to map the c-levels
+            :param y_stat: the y representation, should be: "fraction", "absolute", "local".
+            :param bins: the number of bins per dimension
         """
-        self._plot_check(x, y=None, color=c, fill=None)
+        self._plot_check(self.data, x, y=None, color=c, fill=None)
 
-        if c is None:
-            data = copy.deepcopy(self.data[[x]])
-        else:
-            data = copy.deepcopy(self.data[[x, c]])
+        if y_stat not in ("fraction", "absolute", "local"):
+            raise ValueError(f"unknown y_stat parameter '{y_stat}' should be 'fraction', 'absolute', or 'local'.")
 
         if c is not None:
-            if pd.api.types.is_categorical_dtype(data[c]) or pd.api.types.is_string_dtype(data[c]) or pd.api.types.is_bool_dtype(data[c]):
+            if pd.api.types.is_categorical_dtype(self.data[c]) or pd.api.types.is_string_dtype(self.data[c]) or pd.api.types.is_bool_dtype(self.data[c]):
                 #categorical
                 pass
             else:
                 raise ValueError(f"c '{c}' must be a categorical dtype")
 
-        # Randomize data order
-        data = data.sample(frac=1)
+        if c is None:
+            data = self.data[[x]].copy()
+        else:
+            data = self.data[[x, c]].copy()
 
-        # Get binwidth
-        data_range = max(data[x]) - min(data[x])
-        binwidth = data_range / 100
+        # mask the data
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
         
+        if c is None:
+            data = {x:data}
+        else:
+            data = {a:b[[x]] for a, b in data.groupby(data[c].astype("category"))}
+
+        # Calculate bins
+        try:
+            trans_x = self.transforms[x]
+        except KeyError:
+            raise KeyError(f"no transform available for '{x}', unknown local limits") from None
+        bins_x = np.linspace(trans_x.l_start, trans_x.l_end, num=bins+1, endpoint=True)
+        bins_x = list(bins_x)
+        bin_size = (trans_x.l_end - trans_x.l_start) / bins
+        bin_size *= 0.5
+        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end - bin_size, num=bins, endpoint=False)
+        bins_x_names = list(bins_x_names)
+        
+        for i_key in data:
+            i_data = data[i_key]
+            i_bin = pd.cut(
+                i_data[x], 
+                bins_x,
+                labels=bins_x_names,
+                ordered=False, 
+                include_lowest=True
+            )
+            i_count = i_bin.value_counts(sort=False)
+
+            if y_stat == "fraction":
+                i_sum = sum(i_count) / 100
+                i_count /= i_sum
+
+            i_data = pd.DataFrame(i_count)
+            i_data["__x"] = pd.to_numeric(i_data.index)
+
+            data[i_key] = i_data
+
+        # Build plot base
         plot = p9.ggplot(
             mapping=p9.aes(x)
         )
 
         plot = self._plot_theme(plot)
-        plot = plot + p9.ggtitle(self.name)
-        plot = plot + p9.labs(x=x)
-            
+        plot = self._plot_labels(plot, x=x, y=y_stat)
+
+        # custom _plot_scale()
         try:
-            scale_x = self.scales[x]
+            scale_x = self.transforms[x]
         except KeyError:
             plot = plot + p9.coords.coord_cartesian()
         else:
-            xlim = self.scale_lim
             plot = plot + p9.scale_x_continuous(
-                breaks=scale_x.major_ticks(start=xlim[0], end=xlim[1]),
-                minor_breaks=scale_x.minor_ticks(start=xlim[0], end=xlim[1]),
-                labels=scale_x.labels(start=xlim[0], end=xlim[1]),
+                breaks=scale_x.major_ticks(),
+                minor_breaks=scale_x.minor_ticks(),
+                labels=scale_x.labels(),
                 expand=(0,0),
-                limits=xlim
+                limits=(scale_x.l_start, scale_x.l_end)
             )
 
-        #plot = self._plot_colorscale(plot, rescale=True, color_map=c_map)
-        if c is None:
-            plot = plot + p9.geom_histogram(data=data, na_rm=True, binwidth=binwidth, fill="#0000f0ff", color="#000000ff")
-        else:           
-            levels = data[c].unique()
+        plot = plot + p9.scale_y_continuous(
+            expand=(0,0,0.1,0)
+        )
+
+        # plot the line and polygons according to color mapping
+        for i_key in data:
+            if c_map:
+                plot += p9.geom_path(
+                    data=data[i_key],
+                    mapping=p9.aes(x="__x", y=x),
+                    color=c_map[i_key],
+                    inherit_aes=False,
+                    size=1.0
+                )
+
+            else:
+                plot += p9.geom_path(
+                    data=data[i_key],
+                    mapping=p9.aes(x="__x", y=x),
+                    color="#000000",
+                    inherit_aes=False,
+                    size=1.0
+                )
+
+            poly_start = data[i_key].iloc[0].copy()
+            poly_end = data[i_key].iloc[-1].copy()
+            poly_start[x] = 0
+            poly_end[x] = 0
+            poly_data = pd.concat([poly_start, data[i_key].copy(), poly_end])
 
             if c_map:
-                # Check if c_map covers all cases
-                for level in levels:
-                    if level not in c_map:
-                        # ignore np.nans, handled by plotnine
-                        if pd.isnull(level):
-                            pass
-                        else:
-                            raise ValueError(f"level '{level}' undefined in c_map")
+                plot += p9.geom_polygon(
+                    data = poly_data,
+                    mapping=p9.aes(x="__x", y=x),
+                    color=c_map[i_key],
+                    fill=c_map[i_key],
+                    alpha=0.32,
+                    inherit_aes=False
+                )
             else:
-                if len(levels) <= 10:
-                    t_map = self.tab10
-                elif len(levels) <= 20:
-                    t_map = self.tab20
-                else:
-                    raise ValueError("undefined default colormap for levels of size >20")
-
-            for i, level in enumerate(levels):
-                #ignore nan's
-                if isinstance(level, float) and np.isnan(level):
-                    continue
-                data_level = data.loc[data[c] == level]
-                if c_map:
-                    plot = plot + p9.geom_histogram(data=data_level, na_rm=True, binwidth=binwidth, fill=c_map[level], color="#00000000", alpha=0.2)
-                else:
-                    plot = plot + p9.geom_histogram(data=data_level, na_rm=True, binwidth=binwidth, fill=t_map[i], color="#00000000", alpha=0.2)
+                plot += p9.geom_polygon(
+                    data = poly_data,
+                    mapping=p9.aes(x="__x", y=x),
+                    color="#00000000",
+                    fill="#00000050",
+                    inherit_aes=False
+                )              
 
         return plot
 
     ## algorithms
+    def _bin(self, x: str, bins: int) -> pd.Categorical:
+        """
+        Bins the data of parameter x
+            :param x: the parameter to bin
+            :param bins: the number of x bins
+        """
+        # Calculate bins
+        try:
+            trans = self.transforms[x]
+        except KeyError:
+            raise KeyError(f"no transform available for '{x}', unknown local limits") from None
+        bins = np.linspace(trans.l_start, trans.l_end, num=bins+1, endpoint=True)
+        bins = list(bins)
+
+        # Cut into bins
+        temp = pd.cut(
+            self.data[x], 
+            bins,
+            labels=bins[:-1],
+            ordered=False, 
+            include_lowest=True
+        )
+
+        return temp
 
     @staticmethod
-    def _reduce(data: pd.DataFrame, factor: int=2) -> pd.DataFrame:
+    def _lowess(data: pd.DataFrame, x: str, y: str) -> pd.DataFrame:
         """
-        Lowers the resolution of continuous data by dividing it by the factor
-            :data: the data to reduce (in place)
-            :param factor: resolution rescale factor
-            :returns: reduced pd.DataFrame
+        Performs LOcally WEighted Scatterplot Smoothing on the y value at the given x value
+            :param data: the input dataframe
+            :param x: the x-axis
+            :param y: the y-axis
+            :returns: pd.Dataframe of x and smoothed y
         """
-        # Even run if factor == 1, non-integer input data needs to be 'integerized' for proper binning
+        from statsmodels import nonparametric
+        lowess = nonparametric.smoothers_lowess.lowess(
+            endog=data[y],
+            exog=data[x],
+            frac=0.1,
+            it=5,
+            delta=0.0,
+            is_sorted=False,
+            missing="drop",
+            return_sorted=True
+        )
+        lowess = pd.DataFrame(lowess, columns=[x, y])
+        lowess.drop_duplicates(inplace=True)
 
-        if factor == 0:
-            raise ValueError("cannot divide by zero")
+        return lowess
 
-        def __reduce(column: pd.Series, factor: int):
-            if pd.api.types.is_numeric_dtype(column):
-                return column.floordiv(factor)
-            else:
-                return column
-
-        return data.apply(lambda x: __reduce(x, factor), axis="index")
-
-    def reduce(self, factor: int=2) -> None:
-        """
-        Divides all categorical columns in .data with the factor. 
-        If you want the DataFrame to be returned instead use the staticmethod version _reduce().
-            :param factor: the integer division factor
-        """
-        self._data = self._reduce(self.data, factor)
-        self.scale_lim[0] = self.scale_lim[0] // factor
-        self.scale_lim[1] = self.scale_lim[1] // factor
-
-    @staticmethod
-    def _bin(data: pd.DataFrame, x: str, y: str=None, z: str=None, condensor: Callable[[pd.Series], Any]=_condensor_mean) -> pd.DataFrame:
-        """
-        Bins the pandas dataframe in 1(x), 2(x,y) or 3(x,y,z) dimensions.
-        The value of the bin will be calculated using all data in that bin using the condensor function.
-        The condensor function has to be able to accept categorial and discreet inputs
-            :param x: the x-dimension
-            :param y: (optional) the y-dimension
-            :param z: (optional) the z-dimension
-            :param condensor: the function to condense a bin into a single value
-            :returns: the binned pd.DataFrame
-        """
-        group_x: List[pd.DataFrame] = [y for x, y in data.groupby(x, as_index=False)]
-        
-        # Store dtypes for recasting of numeric dtypes
-        dtypes = data.dtypes
-
-        binned: pd.DataFrame = None
-        if y is None:
-            # 1 Dimensional binning
-            for i in range(0, len(group_x)):
-                # Store x to prevent condensor from changing the value
-                temp_x = group_x[i][x].iloc[0]
-                group_x[i] = group_x[i].apply(lambda x: condensor(x), axis="index")
-                group_x[i][x] = temp_x
-
-            # delist into dataframe
-            binned = pd.concat(group_x, axis="columns").T
-
-        elif z is None:
-            # 2 Dimensional binning
-            for i in range(0, len(group_x)):
-                group_y: List[pd.DataFrame] = [y for x, y in group_x[i].groupby(y, as_index=False)]
-                for j in range(0, len(group_y)):
-                    # store x, y to prevent condensor from changing the value
-                    temp_xy = group_y[j][[x, y]].iloc[0]
-                    group_y[j] = group_y[j].apply(lambda x: condensor(x), axis="index")
-                    group_y[j][[x, y]] = temp_xy
-
-                group_x[i] = pd.concat(group_y, axis="columns").T   
-            binned = pd.concat(group_x, axis="index")
-
-        else:
-            # 3 Dimensional binning
-            for i in range(0, len(group_x)):
-                
-                group_y: List[pd.DataFrame] = [y for x, y in group_x[i].groupby(y, as_index=False)]
-                for j in range(0, len(group_y)):
-                    
-                    group_z: List[pd.DataFrame] = [y for x, y in group_y[j].groupby(z, as_index=False)]
-                    for k in range(0, len(group_z)):
-                        # store x,y,z to prevent condensor from changing the value
-                        temp_xyz = group_z[k][[x, y, z]].iloc[0]
-                        group_z[k] = group_z[k].apply(lambda x: condensor(x), axis="index")
-                        group_z[k][[x, y, z]] = temp_xyz
-                        
-                    group_y[j] = pd.concat(group_z, axis="columns").T
-
-                group_x[i] = pd.concat(group_y, axis="index")
-    
-            binned = pd.concat(group_x, axis="index")
-
-        # restore numeric dtypes
-        # The concat + transform removes numeric dtypes. Recast
-        for column in binned.columns:
-            # Only try to cast the originally numeric columns
-            if not pd.api.types.is_numeric_dtype(dtypes[column]):
-                continue
-
-            try:
-                binned[column] = pd.to_numeric(binned[column])
-            except ValueError:
-                pass
-
-        return binned
-
-    def bin(self, x: str, y: str=None, z: str=None, condensor: Callable[[pd.Series], Any]=_condensor_mean) -> None:
-        """
-        Splits the dataframe in x (and if applicable y, z). Each unique x(,y,z) split will be condensed
-        into a single datapoint using the condensor functor. 
-        If you want the DataFrame to be returned instead use the staticmethod version _bin().
-            :param x: the x-dimension
-            :param y: (optional) the y-dimension
-            :param z: (optional) the z-dimension
-            :param condensor: the function to condense a bin into a single value
-        """
-        self._data = self._bin(self.data, x=x, y=y, z=z, condensor=condensor)
+    ## Dimensional reduction
 
     def add_umap(self, parameters: List[str], q: Tuple[float, float]=(0.05, 0.95), seed: int=None) -> None:
         """
@@ -1524,7 +1721,6 @@ class Plotter():
         # Scale data per sample
         data_samples = [y for x, y in self.data.groupby("__sample")]
 
-        plots = []
         for sample in data_samples:
             # Standard/RobustScaler - they centralize based on mean/median. In flowcytometry data
             # we cannot assume that the distributions (generalize as a mix of two gaussians) shows equal/between sample
@@ -1556,8 +1752,28 @@ class Plotter():
 
         self.data["UMAP1"] = data_umap["__UMAP1"]
         self.data["UMAP2"] = data_umap["__UMAP2"]
+
+        # Add label data
         self.labels["UMAP1"] = "UMAP1"
         self.labels["UMAP2"] = "UMAP2"
+
+        # Add transform data
+        for i in ("UMAP1", "UMAP2"):
+            i_min = self.data[i].min()
+            i_max = self.data[i].max()
+            i_range = i_max - i_min
+            start = i_min - (0.1 * i_range)
+            end = i_max + (0.1 * i_range)
+
+            i_generator = transform.LinearGenerator()
+            i_generator.stepsize_minor = 2.5
+            i_generator.stepsize_major = 5
+            i_transform = transform.Linear(l_start=start, l_end=end, g_start=start, g_end=end)
+            i_transform.generator = i_generator
+            self.transforms[i] = i_transform
+
+        # Add metadata
+        self.metadata["__umap_params"] = parameters
 
     def add_tsne(self) -> None:
         """
@@ -1566,12 +1782,13 @@ class Plotter():
         """
         raise NotImplementedError("tSNE has yet to be implemented")
 
-    def add_pca(self, parameters: List[str], q: Tuple[float, float]=(0.05, 0.95)):
+    def add_pca(self, parameters: List[str], q: Tuple[float, float]=(0.05, 0.95), seed: int=None):
         """
         Calculates the Principle Component axis
         Adds the value of each datapoint loading under the column names "PCn" (replace n with number of PC)
             :param parameters: the parameters to use for pca calculation
             :param q: the quantile range to use for centering and scaling of the data (q_min, q_max)
+            :param seed: the seed used; if 'None' the seed is randomly generated
         """
         for param in parameters:
             if not (param == self.data.columns).any():
@@ -1583,7 +1800,6 @@ class Plotter():
         # Scale data per sample
         data_samples = [y for x, y in self.data.groupby("__sample")]
 
-        plots = []
         pca_norm = {}
         for sample in data_samples:
             # Standard/RobustScaler - they centralize based on mean/median. In flowcytometry data
@@ -1620,13 +1836,12 @@ class Plotter():
 
         import sklearn
         n_components = len(parameters)
-        pca = sklearn.decomposition.PCA(n_components=n_components)
+        pca = sklearn.decomposition.PCA(n_components=n_components, random_state=seed)
         pca.fit(scaled_data[parameters])
-
 
         # Calculate transformation for sample plotting
         pca_data = pd.DataFrame(pca.transform(scaled_data[parameters]))
-        pca_data.index = self.data.index
+        pca_data.index = scaled_data.index
         pca_data.columns = [f"PC{i+1}" for i in range(0, n_components)]
 
         self._data[pca_data.columns] = pca_data
@@ -1643,9 +1858,24 @@ class Plotter():
         pca_vector.columns = parameters
         self.metadata["__pca_loadings"] = pca_vector.T
 
-    ## saving
+        # Add transform data
+        for i in pca_data.columns:
+            i_min = pca_data[i].min()
+            i_max = pca_data[i].max()
+            i_range = i_max - i_min
+            start = i_min - (0.1 * i_range)
+            end = i_max + (0.1 * i_range)
 
-    def save_gif(self, path, x: str, y: str, z: str, c: str):
+            i_generator = transform.LinearGenerator()
+            i_generator.stepsize_minor = 0.5
+            i_generator.stepsize_major = 1
+            i_transform = transform.Linear(l_start=start, l_end=end, g_start=start, g_end=end)
+            i_transform.generator = i_generator
+            self.transforms[i] = i_transform
+
+    ## saving # originally designed for z-stack-like figures - left here for compatibility
+
+    def save_3d_gif(self, path, x: str, y: str, z: str, c: str):
         """
         Saves a raster_3d of x-y with a z-stack and density of c
             :param path: the save directory (file name is generated automatically)
@@ -1655,6 +1885,8 @@ class Plotter():
             :param c: the c(olor) dimension - the parameter used for color mapping
             :raises ValueError: if function cannot be completed
         """
+        from PIL import Image
+
         if path and not os.path.isdir(path):
             raise ValueError(f"path '{path}' doesnt point to existing directory")
 
@@ -1684,33 +1916,5 @@ class Plotter():
             buffer.close()
 
         # Close all in the background drawn plots and renable plotview
-        plt.close("all")
-        plt.show()
-
-    def save_png(self, path, x:str, y:str, c:str, c_stat:str="density", c_map:Dict[str, str]=None):
-        """
-        Saves a raster of x-y with color coding of the c_stat of c
-            :param path: the save directory (file name is generated automatically)
-            :param x: the x dimension
-            :param y: the y dimension
-            :param c: the c(olor) dimension - the parameter used for color mapping
-            :param c_stat: the color statistic to plot
-            :param c_map: only used for categorical color parameters. Uses the color_map to map the levels
-            :raises ValueError: if function cannot be completed
-        """
-        if path and not os.path.isdir(path):
-            raise ValueError(f"path '{path}' doesnt point to existing directory")
-
-        plt.ioff()
-
-        plot = self.raster(x=x, y=y, c=c, c_stat=c_stat, color_map=c_map)
-
-        plot.save(
-            filename=f"{x}_{y}_{c_stat}[{c}].png",
-            format="png",
-            path=path,
-            verbose=False
-        )
-
         plt.close("all")
         plt.show()

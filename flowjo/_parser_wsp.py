@@ -321,12 +321,12 @@ class _RectangleGating(_AbstractGating):
         self.percent_y: float = None
         
         self.dimension_x: str = None
-        self.min_x: float = None
-        self.max_x: float = None
+        self.min_x: float = None    # in channel space as parsed from wsp file
+        self.max_x: float = None    # in channel space as parsed from wsp file
 
         self.dimension_y: str = None
-        self.min_y: float = None
-        self.max_y: float = None
+        self.min_y: float = None    # in channel space as parsed from wsp file
+        self.max_y: float = None    # in channel space as parsed from wsp file
 
         self._parse(element)
 
@@ -399,19 +399,19 @@ class _RectangleGating(_AbstractGating):
 
         boolean_result = np.array([True]*len(data.index))
         if self.max_x:
-            scaled_max_x = transform_x.scale(self.max_x, start=CHANNEL_MIN, end=CHANNEL_MAX)
+            scaled_max_x = transform_x.scale(self.max_x)
             boolean_result = boolean_result & (data[self.dimension_x] < scaled_max_x)
         
         if self.min_x:
-            scaled_min_x = transform_x.scale(self.min_x, start=CHANNEL_MIN, end=CHANNEL_MAX)
+            scaled_min_x = transform_x.scale(self.min_x)
             boolean_result = boolean_result & (data[self.dimension_x] >= scaled_min_x)
 
         if self.max_y:
-            scaled_max_y = transform_y.scale(self.max_y, start=CHANNEL_MIN, end=CHANNEL_MAX)
+            scaled_max_y = transform_y.scale(self.max_y)
             boolean_result = boolean_result & (data[self.dimension_y] < scaled_max_y)
 
         if self.min_y:
-            scaled_min_y = transform_y.scale(self.min_y, start=CHANNEL_MIN, end=CHANNEL_MAX)
+            scaled_min_y = transform_y.scale(self.min_y)
             boolean_result = boolean_result & (data[self.dimension_y] >= scaled_min_y)
 
         return boolean_result
@@ -431,10 +431,10 @@ class _RectangleGating(_AbstractGating):
         x = [x_min, x_max, x_max, x_min, x_min]
         y = [y_max, y_max, y_min, y_min, y_max]
 
-        channel_x = transform_x.scaler(x, start=CHANNEL_MIN, end=CHANNEL_MAX)
+        channel_x = transform_x.scaler(x)
     
         if transform_y is not None:
-            channel_y = transform_y.scaler(y, start=CHANNEL_MIN, end=CHANNEL_MAX)
+            channel_y = transform_y.scaler(y)
         
             polygon = pd.DataFrame(list(zip(channel_x, channel_y)))
             polygon.columns = [self.dimension_x, self.dimension_y]
@@ -500,8 +500,8 @@ class _PolygonGating(_AbstractGating):
         """
         channel_x = copy.deepcopy(self.coordinates_x)
         channel_y = copy.deepcopy(self.coordinates_y)
-        channel_x = transform_x.scaler(channel_x, start=CHANNEL_MIN, end=CHANNEL_MAX)
-        channel_y = transform_y.scaler(channel_y, start=CHANNEL_MIN, end=CHANNEL_MAX)
+        channel_x = transform_x.scaler(channel_x)
+        channel_y = transform_y.scaler(channel_y)
 
         polygon = pd.DataFrame(list(zip(channel_x, channel_y)))
         polygon = polygon.append(polygon.iloc[0], ignore_index=True)
@@ -527,8 +527,8 @@ class _PolygonGating(_AbstractGating):
         # The coordinates_x and coordinates_y are in scale format. Apply transformation to transform to channel format.
         channel_x = copy.deepcopy(self.coordinates_x)
         channel_y = copy.deepcopy(self.coordinates_y)
-        channel_x = transform_x.scaler(channel_x, start=CHANNEL_MIN, end=CHANNEL_MAX)
-        channel_y = transform_y.scaler(channel_y, start=CHANNEL_MIN, end=CHANNEL_MAX)
+        channel_x = transform_x.scaler(channel_x)
+        channel_y = transform_y.scaler(channel_y)
 
         polygon = mpl_path.Path(list(zip(channel_x, channel_y)), closed=False)
 
@@ -543,19 +543,20 @@ class _EllipsoidGating(_AbstractGating):
     """
     A representation of an ellips gate.
 
-                   V_C
+                   v_c
                     |
-    V_A --- F_A ---------- F_B ---- V_B
+    v_a --- f_a --------- f_b ---- v_b
                     |
-                   V_D
+                   v_d
 
         :param element: EllipsoidGate element.
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
         self.space = "channel"
+        self.resolution = 256           # The channel resolution of the ellipse gate as stored by FlowJo in wsp
 
-        self.distance: float = None     # This is NOT 2x ellipse a
+        self.distance: float = None     # The distance between any point on the ellips and the two focal points
 
         self.dimension_x: str = None
         self.dimension_y: str = None
@@ -637,14 +638,14 @@ class _EllipsoidGating(_AbstractGating):
 
         distance = np.sqrt((self.vertex_a_x - self.vertex_b_x)**2 + (self.vertex_a_y - self.vertex_b_y)**2)
         
-        # The ellipse resolution is at most 255 which is 4x lower then the channel resolution, 
-        # therefore divide by 4
-        channel_scale = (256 / (CHANNEL_MAX+1))
+        # The ellipse resolution is 0-255, adjust this to the actual local/channel resolution
+        channel_scale_x = (self.resolution / (transform_x.l_end - transform_x.l_start + 1))
+        channel_scale_y = (self.resolution / (transform_y.l_end - transform_y.l_start + 1))
 
-        def ellipse_contain(data: pd.Series, distance, channel_scale) -> bool:
+        def ellipse_contain(data: pd.Series, distance, channel_scale_x, channel_scale_y) -> bool:
             
-            x = data.iloc[0] * channel_scale
-            y = data.iloc[1] * channel_scale
+            x = data.iloc[0] * channel_scale_x
+            y = data.iloc[1] * channel_scale_y
 
             distance_f_a = np.sqrt((self.foci_a_x-x)**2 + (self.foci_a_y-y)**2)
             distance_f_b = np.sqrt((self.foci_b_x-x)**2 + (self.foci_b_y-y)**2)
@@ -654,7 +655,7 @@ class _EllipsoidGating(_AbstractGating):
             else:
                 return False
 
-        return data[[self.dimension_x, self.dimension_y]].apply(lambda x: ellipse_contain(x, distance, channel_scale), axis=1)
+        return data[[self.dimension_x, self.dimension_y]].apply(lambda x: ellipse_contain(x, distance, channel_scale_x, channel_scale_y), axis=1)
 
     def polygon(self, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.DataFrame:
         """
@@ -690,8 +691,11 @@ class _EllipsoidGating(_AbstractGating):
             channel_y.append(ellips_y(a, b, rotation, t))
 
         # Modify to channel resolution
-        channel_x = [4* (x + center_x) for x in channel_x]
-        channel_y = [4* (y + center_y) for y in channel_y]
+        channel_scale_x = ((transform_x.l_end - transform_x.l_start + 1) / self.resolution)
+        channel_scale_y = ((transform_y.l_end - transform_y.l_start + 1) / self.resolution)
+
+        channel_x = [channel_scale_x * (x + center_x) for x in channel_x]
+        channel_y = [channel_scale_y * (y + center_y) for y in channel_y]
 
         # Close curve
         channel_x.append(channel_x[0])
@@ -719,7 +723,7 @@ class Cytometer():
         # default parsing and transformation setting
         self.use_fcs3: bool = None
         self.use_biex_transform: bool = None    # If by default biex transform is used
-        self.transform_type: str = None         # Default transform (is use_biex_transform is True -> 'BIEX' here too)
+        self.transform_type: str = None         # Default transform (if use_biex_transform is True -> 'BIEX' here too)
         
         self.use_gain: bool = None              # Likely whether gain amplification is used (like with avalanche detectors)
 
@@ -791,22 +795,28 @@ class Cytometer():
             for transform in transforms.find("Transforms"):
                 if transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}linear":
                     scale = LinearTransform(
-                        start=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}minRange"]),
-                        end=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
+                        l_start=CHANNEL_MIN,
+                        l_end=CHANNEL_MAX,
+                        g_start=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}minRange"]),
+                        g_end=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
                         gain=float(transform.attrib["gain"])
                     )
                     name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
                     self.transforms[identifier][name] = scale
                 elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}log":
                     scale = Log10Transform(
-                        start=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}offset"]),
-                        end=int(10**float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}decades"]))
+                        l_start=CHANNEL_MIN,
+                        l_end=CHANNEL_MAX,
+                        g_start=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}offset"]),
+                        g_end=int(10**float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}decades"]))
                     )
                     name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
                     self.transforms[identifier][name] = scale
                 elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}biex":
                     scale = BiexTransform(
-                        end=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
+                        l_start=CHANNEL_MIN,
+                        l_end=CHANNEL_MAX,
+                        g_end=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
                         neg_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}neg"]),
                         width=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}width"]),
                         pos_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}pos"]),
@@ -900,22 +910,28 @@ class Sample():
         for transform in element.find("Transformations"):
             if transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}linear":
                 scale = LinearTransform(
-                    start=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}minRange"]),
-                    end=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
+                    l_start=CHANNEL_MIN,
+                    l_end=CHANNEL_MAX,
+                    g_start=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}minRange"]),
+                    g_end=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
                     gain=float(transform.attrib["gain"])
                 )
                 name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
                 self.transforms[name] = scale
             elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}log":
                 scale = Log10Transform(
-                    start=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}offset"]),
-                    end=int(10**float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}decades"]))
+                    l_start=CHANNEL_MIN,
+                    l_end=CHANNEL_MAX,
+                    g_start=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}offset"]),
+                    g_end=int(10**float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}decades"]))
                 )
                 name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
                 self.transforms[name] = scale
             elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}biex":
                 scale = BiexTransform(
-                    end=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
+                    l_start=CHANNEL_MIN,
+                    l_end=CHANNEL_MAX,
+                    g_end=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
                     neg_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}neg"]),
                     width=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}width"]),
                     pos_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}pos"]),

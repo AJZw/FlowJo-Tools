@@ -286,12 +286,14 @@ class Gate:
                         if factor_level not in data.columns:
                             missing_levels.append(factor_level)
 
-                    print(f"couldnt factorize '{factor_name}' missing levels {missing_levels}")
-                    continue
+                    print(f"while factorizing '{factor_name}' not all levels were found {missing_levels}")
 
                 data[factor_name] = np.nan
                 for factor_level in factor_levels:
-                    data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
+                    try:
+                        data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
+                    except KeyError:
+                        pass
 
                     #redundant.append(factor_level)
 
@@ -434,6 +436,9 @@ class Gate:
             raise KeyError(f"gate index should inherit str not '{gate.__class__.__name__}'")
 
         gates = gate.split("/", 1)
+
+        if gates[0] == "":
+            raise KeyError(f"gate node '{gates[0]}' in '{self.path}/{gates[0]}' is empty")
 
         try:
             gate = self._gates[gates[0]]
@@ -688,6 +693,9 @@ class GroupGate:
             raise KeyError(f"gate index should inherit str not '{gate.__class__.__name__}'")
 
         gates = gate.split("/", 1)
+
+        if gates[0] == "":
+            raise KeyError(f"gate node '{gates[0]}' in '{self.path}/{gates[0]}' is empty")
 
         try:
             gate = self._gates[gates[0]]
@@ -971,12 +979,14 @@ class Sample:
                             if factor_level not in data.columns:
                                 missing_levels.append(factor_level)
 
-                        print(f"couldnt factorize '{factor_name}' missing levels {missing_levels}")
-                        continue
+                        print(f"while factorizing '{factor_name}' not all levels were found {missing_levels}")
 
                     data[factor_name] = np.nan
                     for factor_level in factor_levels:
-                        data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
+                        try:
+                            data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
+                        except KeyError:
+                            pass
 
         else:
             # Return from a gate node -> gate node takes care of data handling
@@ -1163,6 +1173,9 @@ class _Gates:
 
         gates = gate.split("/", 1)
 
+        if gates[0] == "":
+            raise KeyError(f"gate node '{gates[0]}' is empty")
+
         try:
             gate = self._gates[gates[0]]
         except KeyError:
@@ -1301,6 +1314,13 @@ class Group:
         Getter for sample names
         """
         return self._names
+
+    @property
+    def samples(self) -> List[Sample]:
+        """
+        Getter for sample data
+        """
+        return [self._data[key] for key in self._data]
 
     def data(self, start_node: str=None, translate: bool=True) -> pd.DataFrame:
         """
@@ -1443,7 +1463,7 @@ class Group:
                     continue
 
                 if transform_a != transform_b:
-                    print(f"WARNING: in group '{self.name}' sample '{self._data[samples[0]].name} {key}'-'{self._data[samples[i]].name} {key}' differ in parameter transforms")
+                    print(f"WARNING: in group '{self.name}' sample '{self._data[samples[0]].name}'&'{self._data[samples[i]].name}' differ in transform of '{key}'")
 
     def _name_parameters(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -1460,16 +1480,16 @@ class Group:
         name_dict = {}
         warnings = []
         for column in names.columns:
-            unique_names = names[column].unique()
+            unique_names = names[column].dropna().unique()
             unique_names = unique_names[unique_names != ""]
             if len(unique_names) == 0:
                 name_dict[column] = column
             elif len(unique_names) == 1:
                 name_dict[column] = unique_names[0]
             else:
-                warnings.append(f"column '{column}' has multiple [{','.join(unique_names)}] names. First one is used for data()")
+                warnings.append(f"column '{column}' has multiple [{', '.join(unique_names)}] names. '{unique_names[0]}' is used to name the '{column}' parameter")
                 name_dict[column] = unique_names[0]
-        
+
         if warnings:
             print("\n".join(warnings))
 

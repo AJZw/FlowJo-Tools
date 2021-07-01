@@ -868,61 +868,54 @@ class BiexGenerator(_AbstractGenerator):
 class _Abstract():
     """
     Abstract representation of a scale. This class returns the tick-marks / tick-labels
-    on a x-range of 0-1023 for the scale on the original data range.
+    of the global range projected onto the local (linear) range
     In other words: This class calculates the tick-marks as would be plotted in FlowJo.
     """
     def __init__(self):
-        self.start: int = None
-        self.end: int = None
+        # start and end are in global space
+        self.l_start: float = None
+        self.l_end: float = None
+        self.g_start: float = None
+        self.g_end: float = None
         self.generator: _AbstractGenerator = None
 
-    def scale(self, data: float, start: int, end: int) -> float:
+    def scale(self, data: float) -> float:
         """
         Scales a single value
             :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
         """
-        return self.scaler([data], start, end)[0]
+        return self.scaler([data])[0]
 
-    def scaler(self, data: List[float], start: int, end: int) -> List[float]:
+    def scaler(self, data: List[float]) -> List[float]:
         """
         The scaling function
             :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
         """
         raise NotImplementedError("implement in child class")
 
-    def labels(self, start: int=0, end: int=1023) -> List[str]:
+    def labels(self) -> List[str]:
         """
         Returns the labels for the major ticks (for coordinates use major_ticks())
-            :param start: minimum value in plot coordinates
-            :param end: maximum value in plot coordinates
         """
-        return self.generator.labels(self.start, self.end)
+        return self.generator.labels(self.g_start, self.g_end)
  
-    def major_ticks(self, start: int=0, end: int=1023) -> List[float]:
+    def major_ticks(self) -> List[float]:
         """
         Returns the major tick locations
-            :param start: minimum value in plot coordinates
-            :param end: maximum value in plot coordinates
         """
-        ticks = self.generator.major_ticks(self.start, self.end)
+        ticks = self.generator.major_ticks(self.g_start, self.g_end)
 
-        ticks = self.scaler(ticks, start, end)
+        ticks = self.scaler(ticks)
 
         return ticks
     
-    def minor_ticks(self, start: int=0, end: int=1023) -> List[float]:
+    def minor_ticks(self) -> List[float]:
         """
         Returns the minor tick locations
-            :param start: minimum value in plot coordinates
-            :param end: maximum value in plot coordinates
         """
-        ticks = self.generator.minor_ticks(self.start, self.end)
+        ticks = self.generator.minor_ticks(self.g_start, self.g_end)
 
-        ticks = self.scaler(ticks, start, end)
+        ticks = self.scaler(ticks)
 
         return ticks
 
@@ -935,31 +928,34 @@ class _Abstract():
 class Linear(_Abstract):
     """
     Represents a linear scale between the start and end value
-        :param start: start value
-        :param end: end value (if None, end-value is determined based on data and has to be manually added!)
+        :param l_start: start local value
+        :param l_end: end local value
+        :param g_start: start global value
+        :param g_end: end global value
+        :param gain: (unused) gain
     """
-    def __init__(self, start: float=0, end: float=262144, gain: float=1):
+    def __init__(self, l_start: float=0, l_end: float=1023, g_start: int=0, g_end: int=262144, gain: float=1):
         super().__init__()
         self.generator = LinearGenerator()
 
-        self.start: float = start
-        self.end: float = end
+        self.l_start: float = l_start
+        self.l_end: float = l_end
+        self.g_start: float = g_start
+        self.g_end: float = g_end
         self.gain: float = gain   #unused
 
-    def scaler(self, data: List[float], start: int, end: int) -> List[float]:
+    def scaler(self, data: List[float]) -> List[float]:
         """
         The scaling function
             :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
         """
         # Get scaling parameters
-        scale_range = self.end - self.start
-        step_size = (end - start) / scale_range
+        scale_range = self.g_end - self.g_start
+        step_size = (self.l_end - self.l_start) / scale_range
 
         # scale
         for i in range(0, len(data)):
-            data[i] = ((data[i] - self.start) * step_size) + start
+            data[i] = ((data[i] - self.g_start) * step_size) + self.l_start
 
         return data
 
@@ -970,9 +966,13 @@ class Linear(_Abstract):
         if not isinstance(other, Linear):
             return False
         
-        if self.start != other.start:
+        if self.g_start != other.g_start:
             return False
-        if self.end != other.end:
+        if self.g_end != other.g_end:
+            return False
+        if self.l_start != other.l_start:
+            return False
+        if self.l_end != other.l_end:
             return False
         
         if self.gain != other.gain:
@@ -981,42 +981,44 @@ class Linear(_Abstract):
         return True
 
     def __repr__(self) -> str:
-        return f"(LinearTransform:{self.start}-{self.end})"
+        return f"(LinearTransform:[{self.g_start}-{self.g_end}]->[{self.l_start}-{self.l_end}])"
 
 class Log10(_Abstract):
     """
     Represents a logarithmic scale between the start and end value
-        :param start: start (global) value
-        :param end: end (global) value
+        :param l_start: start local value
+        :param l_end: end local value
+        :param g_start: global start value
+        :param g_end: global end value
     """
-    def __init__(self, start: float=3, end: float=262144):
+    def __init__(self, l_start: float=0, l_end: float=1023, g_start: float=3, g_end: float=262144):
         super().__init__()
         self.generator = Log10Generator()
 
-        self.start: float = start
-        self.end: float = end
+        self.l_start: float = l_start
+        self.l_end: float = l_end
+        self.g_start: float = g_start
+        self.g_end: float = g_end
 
-        if self.start <= 0:
+        if self.g_start <= 0:
             raise ValueError("logarithmic scale have to start with a value >0")
 
-    def scaler(self, data: List[float], start: int, end: int) -> List[float]:
+    def scaler(self, data: List[float]) -> List[float]:
         """
         The scaling function
             :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
         """
         # Get scaling parameters
-        scale_range = np.log10(self.end) - np.log10(self.start)
-        step_size = (end - start) / scale_range
+        scale_range = np.log10(self.g_end) - np.log10(self.g_start)
+        step_size = (self.l_end - self.l_start) / scale_range
 
         # scale
         for i in range(0, len(data)):
             # Not all values can be scaled by log; so those get turned to the minimum value
             if data[i] < 0:
-                data[i] = start
+                data[i] = self.l_start
             else:
-                data[i] = ((np.log10(data[i]) - np.log10(self.start)) * step_size) + start
+                data[i] = ((np.log10(data[i]) - np.log10(self.g_start)) * step_size) + self.l_start
 
         return data
 
@@ -1027,54 +1029,63 @@ class Log10(_Abstract):
         if not isinstance(other, Log10):
             return False
         
-        if self.start != other.start:
+        if self.g_start != other.g_start:
             return False
-        if self.end != other.end:
+        if self.g_end != other.g_end:
+            return False
+        if self.l_start != other.l_start:
+            return False
+        if self.l_end != other.l_end:
             return False
 
         return True
 
     def __repr__(self) -> str:
-        return f"(Log10Transform:{self.start}-{self.end})"
+        return f"(Log10Transform:[{self.g_start}-{self.g_end}]->[{self.l_start}-{self.l_end}])"
 
 class Biex(_Abstract): 
     """
     Represents a biexponential scale between the start and end value.
-    Different from the others this scale generates a look-up table. This is faster for big matrix transforms. 
+    This class generates a look-up table. This is faster for big matrix transforms. 
     But a bit waistfull for small number of iterations. Ow well.
-        :param start: start value
-        :param end: end value
+        :param l_start: start local value
+        :param l_end: end local value
+        :param g_end: global end value
+        :param neg_decade: the extra negative decades
+        :param width: the biexponential width parameter
+        :param pos_decade: the positive decades
+        :param length: (unused) the lookup table resolution
     """
-    def __init__(self, end: float=262144, neg_decade: float=0, width: float=-100, pos_decade: float=4.418539922, length: int=256):
+    def __init__(self, l_start: float=0, l_end: float=1023, g_end: float=262144, neg_decade: float=0, width: float=-100, pos_decade: float=4.418539922, length: int=256):
         super().__init__()
         self.generator = BiexGenerator()
 
-        self.length: int = length   #unused - likely a reference flowjo's lookup resolution
+        self.l_start: float = l_start
+        self.l_end: float = l_end
+        self.g_end: float = g_end
         self.neg_decade: float = neg_decade
         self.width: float = width
         self.pos_decade: float = pos_decade
-        self.end: float = end
+        self.length: int = length   #unused - likely a reference flowjo's lookup resolution
 
         self.values: List[int] = None
         self.lookup: List[float] = None
-        self._lookup_range: Tuple[int, int] = None
+        self._lookup_range: Tuple[int, int] = None # in local space
 
-    def scaler(self, data: List[float], start: int, end: int) -> List[float]:
+    def scaler(self, data: List[float]) -> List[float]:
         """
         The scaling function. Values outside the lookup range will be placed outside the start-end range
             :param data: the data to scale
-            :param start: the local space start
-            :param end: the local space end
         """
-        self._check_lookup(start, end)
+        self._check_lookup()
 
         for i in range(0, len(data)):
             index = bisect.bisect_right(self.lookup, data[i])
 
             if not index:
-                value = start-1.0
+                value = self.l_start-1.0
             elif index == len(self.lookup):
-                value = end+1.0
+                value = self.l_end+1.0
             else:
                 value = self.values[index]
 
@@ -1082,13 +1093,11 @@ class Biex(_Abstract):
 
         return data
 
-    def labels(self, start: int=0, end: int=1023) -> Tuple[List[float], List[str]]:
+    def labels(self) -> Tuple[List[float], List[str]]:
         """
         Returns the labels for the major ticks (for coordinates use major_ticks())
-            :param start: minimum value in plot coordinates
-            :param end: maximum value in plot coordinates
         """
-        self._check_lookup(start, end)
+        self._check_lookup()
         labels = self.generator.labels(self.lookup[0], self.lookup[-1])
 
         # remove too-close-to-zero labels
@@ -1105,57 +1114,47 @@ class Biex(_Abstract):
         if i_0 is None:
             return labels
 
-        labels_x = self.scaler(
-            self.generator.major_ticks(self.lookup[0], self.lookup[-1]), 
-            start, 
-            end
-        )
+        labels_x = self.scaler(self.generator.major_ticks(self.lookup[0], self.lookup[-1]))
 
         x_0 = labels_x[i_0]
         for i in range(i_0 + 1, len(labels)):
-            if (labels_x[i] - x_0) < ((end - start) * 0.035):
+            if (labels_x[i] - x_0) < ((self.l_end - self.l_start) * 0.035):
                 labels[i] = ""
                 labels[i_0 - (i-i_0)] = ""
 
         return labels
 
-    def major_ticks(self, start: int=0, end: int=1023) -> List[float]:
+    def major_ticks(self) -> List[float]:
         """
         Returns the major tick locations
-            :param start: minimum value in plot coordinates
-            :param end: maximum value in plot coordinates
         """
-        self._check_lookup(start, end)
+        self._check_lookup()
         ticks = self.generator.major_ticks(self.lookup[0], self.lookup[-1])
-        ticks = self.scaler(ticks, start, end)
+        ticks = self.scaler(ticks)
 
         return ticks
     
-    def minor_ticks(self, start: int=0, end: int=1023) -> List[float]:
+    def minor_ticks(self) -> List[float]:
         """
         Returns the minor tick locations
-            :param start: minimum value in plot coordinates
-            :param end: maximum value in plot coordinates
         """
-        self._check_lookup(start, end)
+        self._check_lookup()
         ticks = self.generator.minor_ticks(self.lookup[0], self.lookup[-1])
-        ticks = self.scaler(ticks, start, end)
+        ticks = self.scaler(ticks)
 
         return ticks
 
-    def _check_lookup(self, start: int, end: int) -> None:
+    def _check_lookup(self) -> None:
         """
         Checks if (re)building of the lookup table is necessary and (re)builds ifso.
-            :param start: the start in local space
-            :param end: the end in local space
         """
         if self.lookup is None:
-            self._build_lookup(start, end)
+            self._build_lookup()
 
-        elif self._lookup_range[0] != start or self._lookup_range[1] != end:
-            self._build_lookup(start, end)
+        elif self._lookup_range[0] != self.l_start or self._lookup_range[1] != self.l_end:
+            self._build_lookup()
 
-    def _build_lookup(self, start: int, end: int):
+    def _build_lookup(self):
         """
         Builds the lookup table for the biexponential transform
             :param start: the local space start
@@ -1167,14 +1166,14 @@ class Biex(_Abstract):
         decades = self.pos_decade
         width = np.log10(-self.width)   # log10 transform to make the data 'equivalent' to decades and extra
         extra = self.neg_decade
-        channel_range = int(end - start)
+        channel_range = int(self.l_end - self.l_start)
         
         if channel_range < 1:
-            raise ValueError(f"cannot build lookup table with local space range {start}-{end}")
+            raise ValueError(f"cannot build lookup table with local space range {self.l_start}-{self.l_end}")
 
         # Make sure width is within expected values
         if width < 0.5 or width > 3.0:
-            raise ValueError(f"width has to be >= 3.16 (10**0.5) and <= -1000 (10**3), not '{width}'")
+            raise ValueError(f"width has to be <= -3.16 (10**0.5) and >= -1000 (10**3), not '{width}'")
 
         # Make sure extra is within expected values
         if extra < 0:
@@ -1195,7 +1194,7 @@ class Biex(_Abstract):
             decades = extra * channel_range / zero_channel
         width /= 2 * decades
 
-        maximum = self.end
+        maximum = self.g_end
         # Calculate positive range (m) as specified in Logicle paper (in natural log units)
         positive_range = np.log(10.0) * decades
 
@@ -1233,7 +1232,7 @@ class Biex(_Abstract):
 
         self.values = vals
         self.lookup = positive
-        self._lookup_range = (start, end)
+        self._lookup_range = (self.l_start, self.l_end)
 
     @staticmethod
     def _log_root(positive_range: float, width: float):
@@ -1297,10 +1296,14 @@ class Biex(_Abstract):
             return False
         if self.pos_decade != other.pos_decade:
             return False
-        if self.end != other.end:
+        if self.g_end != other.g_end:
+            return False
+        if self.l_start != other.l_start:
+            return False
+        if self.l_end != other.l_end:
             return False
 
         return True
 
     def __repr__(self) -> str:
-        return f"(BiexTransform:{self.end};{self.width:.1f};{self.pos_decade:.1f})"
+        return f"(BiexTransform:[{self.g_end};{self.width:.1f};{self.pos_decade:.1f}]->[{self.l_start}-{self.l_end}])"
