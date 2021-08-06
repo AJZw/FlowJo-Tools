@@ -67,6 +67,7 @@ from typing import List, Dict, Tuple
 
 import numpy as np
 import bisect
+import copy
 
 class _AbstractGenerator():
     """
@@ -949,12 +950,16 @@ class Linear(_Abstract):
         The scaling function
             :param data: the data to scale
         """
+        data = copy.deepcopy(data)
+
         # Get scaling parameters
         scale_range = self.g_end - self.g_start
         step_size = (self.l_end - self.l_start) / scale_range
 
         # scale
         for i in range(0, len(data)):
+            if data[i] is None:
+                continue
             data[i] = ((data[i] - self.g_start) * step_size) + self.l_start
 
         return data
@@ -1008,12 +1013,17 @@ class Log10(_Abstract):
         The scaling function
             :param data: the data to scale
         """
+        data = copy.deepcopy(data)
+
         # Get scaling parameters
         scale_range = np.log10(self.g_end) - np.log10(self.g_start)
         step_size = (self.l_end - self.l_start) / scale_range
 
         # scale
         for i in range(0, len(data)):
+            if data[i] is None:
+                continue
+
             # Not all values can be scaled by log; so those get turned to the minimum value
             if data[i] < 0:
                 data[i] = self.l_start
@@ -1079,7 +1089,12 @@ class Biex(_Abstract):
         """
         self._check_lookup()
 
+        data = copy.deepcopy(data)
+
         for i in range(0, len(data)):
+            if data[i] is None:
+                continue
+
             index = bisect.bisect_right(self.lookup, data[i])
 
             if not index:

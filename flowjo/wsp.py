@@ -172,7 +172,6 @@ from .transform import _Abstract as _AbstractTransform
 
 import pandas as pd
 import numpy as np
-import matplotlib.path as mpl_path
 import os
 import copy
 
@@ -330,7 +329,7 @@ class Gate:
         """
         return self._sample.transforms()
 
-    def polygon(self) -> mpl_path.Path:
+    def polygon(self) -> pd.DataFrame:
         """
         Returns a polygon representation of the _gating. Useful for plotting the gate.
         """
@@ -632,9 +631,9 @@ class GroupGate:
         Returns the sample's parameter transforms. Returns a shallow copy.
         It is assumed all samples in a group have the same transforms.
         """
-        return self._group._data[self._group.ids[0]].transforms()
+        return self._group.transforms()
 
-    def polygon(self) -> mpl_path.Path:
+    def polygon(self) -> pd.DataFrame:
         """
         Returns a polygon representation of the _gating. Useful for plotting the gate.
         """
@@ -734,7 +733,11 @@ class GroupGate:
         #    node_repr = self.name
         #else:
         node_padding = padding - len(self.name)
-        node_repr = f"{self.name}{' '*node_padding}[{self.count}]"
+        try:
+            node_repr = f"{self.name}{' '*node_padding}[{self.count}]"
+        except ValueError:
+            # self.count an fire an error if the sample data hasn't been loaded
+            node_repr = f"{self.name}{' '*node_padding}[no data]"
 
         # Calculate padding
         subnode_pad = 0
@@ -1040,10 +1043,10 @@ class Sample:
     def __len__(self) -> int:
         raise AttributeError("__len__ is ambiguous for Sample object, for amount of gates use .gates attribute, for data size use .count attribute")
 
-    def __getitem__(self, gate: str) -> Gate:
+    def __getitem__(self, gate: str) -> None:
         raise AttributeError(".__getitem__ is ambiguous for Sample object, to get a specific gate use the .gates attribute, for data column use .data()")
 
-    def __contains__(self, sample: str) -> bool:
+    def __contains__(self, sample: str) -> None:
         """
         Checks whether the sample id/name exists within the data
         """
@@ -1243,11 +1246,13 @@ class Group:
         self._parser: _Parser = parser
         self._group: _Group = group_data
 
-        self.name: str = None
-        self._gates: _Gates = _Gates(self)
+        self.name: str = None                   # group name
+        self._gates: _Gates = _Gates(self)      # group gates hook
 
-        self._data: Dict[str, Sample] = {}
-        self._names: List[str] = []
+        self._data: Dict[str, Sample] = {}      # sample data
+        self._names: List[str] = []             # sample names
+
+        self._parameter_names: Dict[str, str] = None    # group-wide parameter names for the samples, this helps handling samples with deviating parameter names
 
         self.__iter: int = None
 
@@ -1405,22 +1410,11 @@ class Group:
         for sample_id in self._data:
             transform.update(self._data[sample_id]._transforms)
 
-        # Check for transform disparities
-        for sample_id in self._data:
-            sample_transform = self._data[sample_id]._transforms
-            for key in sample_transform:
-                # Time is scaled to fit in the data range, so always uncomparable
-                if key == "Time":
-                    if type(sample_transform[key]) != type(transform[key]):
-                        raise ValueError(f"'Time' transform should be of identical type not '{sample_transform[key].__class__.__name__}' and '{transform[key].__class__.__name__}'")
-                    
-                    continue
-                
-                if sample_transform[key] != transform[key]:
-                    raise ValueError(f"transform '{key}' differs in transforms")
+        # Check for transform disparities, this is likely unnecessary. Nonetheless good to double check.
+        self._check_transform()
 
         # 'Fix' parameter names
-        names = self._data[sample_id]._parameter_names
+        names = self._name_lookup()
 
         output = {}
         for key in list(transform.keys()):
@@ -1463,7 +1457,40 @@ class Group:
                     continue
 
                 if transform_a != transform_b:
-                    print(f"WARNING: in group '{self.name}' sample '{self._data[samples[0]].name}'&'{self._data[samples[i]].name}' differ in transform of '{key}'")
+                    print(f"WARNING: in group '{self.name}' sample '{self._data[samples[0]].name}' & '{self._data[samples[i]].name}' differ in transform of '{key}'")
+
+    def _name_lookup(self) -> Dict[str, str]:
+        """
+        Resolves column naming conflicts by generating a lookup table.
+        Everytime a new sample is added to the group this will have to be regenerated.
+            :warnings: whether to print warnings or not
+            :returns: a Dict[column name : name]
+        """
+        if self._parameter_names is None:
+            names = []
+            for sample in self._data:
+                names.append(pd.DataFrame(self._data[sample]._parameter_names, index=[sample]))
+            names = pd.concat(names)
+
+            name_dict = {}
+            warnings = []
+            for column in names.columns:
+                unique_names = names[column].dropna().unique()
+                unique_names = unique_names[unique_names != ""]
+                if len(unique_names) == 0:
+                    name_dict[column] = column
+                elif len(unique_names) == 1:
+                    name_dict[column] = unique_names[0]
+                else:
+                    warnings.append(f"column '{column}' has multiple [{', '.join(unique_names)}] names. '{unique_names[0]}' is used to name the '{column}' parameter")
+                    name_dict[column] = unique_names[0]
+
+            if warnings:
+                print("\n".join(warnings))
+
+            self._parameter_names = name_dict
+
+        return self._parameter_names
 
     def _name_parameters(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -1472,26 +1499,7 @@ class Group:
         """
         # As some samples parameter identifiers can be named differently (or missing)
         # handle the identifiers uniquely for group wide data exports
-        names = []
-        for sample in self._data:
-            names.append(pd.DataFrame(self._data[sample]._parameter_names, index=[sample]))
-        names = pd.concat(names)
-
-        name_dict = {}
-        warnings = []
-        for column in names.columns:
-            unique_names = names[column].dropna().unique()
-            unique_names = unique_names[unique_names != ""]
-            if len(unique_names) == 0:
-                name_dict[column] = column
-            elif len(unique_names) == 1:
-                name_dict[column] = unique_names[0]
-            else:
-                warnings.append(f"column '{column}' has multiple [{', '.join(unique_names)}] names. '{unique_names[0]}' is used to name the '{column}' parameter")
-                name_dict[column] = unique_names[0]
-
-        if warnings:
-            print("\n".join(warnings))
+        name_dict = self._name_lookup()
 
         column_names = []
         for column in data.columns:
@@ -1510,7 +1518,7 @@ class Group:
     def __len__(self) -> int:
         return len(self._data)
 
-    def __getitem__(self, sample: Union[str, int]) -> List[Sample]:
+    def __getitem__(self, sample: Union[str, int]) -> Sample:
         """
         Returns the sample data. Lookup is special. First tries lookup by index.
         If that fails tries lookup by name. Names do not have to be unique.
@@ -1612,7 +1620,7 @@ class Group:
             try:
                 self[sample_id].load_data(csv_files[sample_name], format, compensated)
             except KeyError:
-                warnings.append(f"no data file found for sample with name '{sample_name}'")
+                warnings.append(f"no data file found for sample '{sample_name}'")
         
         if warnings:
             print("\n".join(warnings))
@@ -1770,7 +1778,7 @@ class Workspace:
             try:
                 self.samples[sample_id].load_data(csv_files[sample_name], format, compensated)
             except KeyError:
-                warnings.append(f"no data file found for sample with name '{sample_name}'")
+                warnings.append(f"no data file found for sample '{sample_name}'")
 
         if warnings:
             print("\n".join(warnings))
@@ -1842,7 +1850,7 @@ class _Samples:
     def __len__(self) -> int:
         return len(self._data)
 
-    def __getitem__(self, sample: Union[str, int]) -> List[Sample]:
+    def __getitem__(self, sample: Union[str, int]) -> Sample:
         """
         Returns the sample data. Lookup is special. First tries lookup by index.
         If that fails tries lookup by name. Names do not have to be unique.
@@ -1999,7 +2007,7 @@ class _Groups:
     def __len__(self) -> int:
         return len(self._names)
 
-    def __getitem__(self, group: str) -> List[Sample]:
+    def __getitem__(self, group: str) -> Group:
         """
         Returns the group
             :param group: the group to return
@@ -2180,7 +2188,7 @@ class _Compensation:
     def __len__(self) -> int:
         return len(self._data)
 
-    def __getitem__(self, matrix: str) -> List[Sample]:
+    def __getitem__(self, matrix: str) -> MTX:
         """
         Returns the compensation matrix. Lookup is special. First tries lookup
         by index. If that fails tries lookup by name. Names do not have to be unique.

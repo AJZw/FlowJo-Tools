@@ -40,3 +40,5 @@ __pycache__/
 paper/
 examples/
 /*.py
+to_html/
+seq/

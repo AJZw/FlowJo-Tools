@@ -129,6 +129,87 @@ def _plotnine_grid(plots: List[p9.ggplot], rows: int=1, cols: int=None) -> p9.gg
 
     return fig
 
+def add_polygon(plot: p9.ggplot, gate: pd.DataFrame) -> p9.ggplot:
+    """
+    Adds the gate polygon to the plot. This function doesnt check the axis-labels, so make sure axis are equivalent.
+        :param plot: the ggplot to add the gate polygon to
+        :param gate: the gate coordinates
+        :returns: the original plot + gate polygon
+    """
+    # I have to align the gate to the mapping of the plot
+    try:
+        x_label = plot.labels["x"]
+    except KeyError:
+        x_label = None
+
+    try:
+        x_mapping = plot.mapping["x"]
+    except KeyError:
+        raise AttributeError(f"plot doesnt contain a mapping for the x-axis") from None
+
+    if x_label is None:
+        x_label = x_mapping
+
+    try:
+        y_label = plot.labels["y"]
+    except KeyError:
+        y_label = None
+
+    try:
+        y_mapping = plot.mapping["y"]
+    except KeyError:
+        raise AttributeError(f"plot doesnt contain a mapping for the y-axis") from None
+
+    if y_label is None:
+        y_label = y_mapping
+
+    # dont modify the referenced gate object
+    gate = gate.copy()
+
+    if len(gate.columns) == 1:
+        if not gate.columns.isin([x_label]).any():
+            raise ValueError(f"the mono-dimensional gate with axis '{gate.columns[0]}' cannot be mapped on plot with axis '{x_label}','{y_label}'")
+        
+        # Add missing column
+        if gate.columns[0] == x_label:
+            axis_unbound = "y"
+        else:
+            axis_unbound = "x"
+
+        # I hope this works! I dont have time to test this now
+        for scale in plot.scales:
+            if axis_unbound == "x":
+                if isinstance(scale, p9.scales.scale_x_continuous) or isinstance(scale, p9.scales.scale_x_date) or isinstance(scale, p9.scales.scale_x_datetime) or isinstance(scale, p9.scales.scale_x_discrete) or isinstance(scale, p9.scales.scale_x_log10) or isinstance(scale, p9.scales.scale_x_reverse) or isinstance(scale, p9.scales.scale_x_sqrt) or isinstance(scale, p9.scales.scale_x_timedelta):
+                    gate[x_label] = [scale._limits[0], scale._limits[0], scale._limits[1], scale._limits[1], scale._limits[0]]
+                    break
+            elif axis_unbound == "y":
+                if isinstance(scale, p9.scales.scale_y_continuous) or isinstance(scale, p9.scales.scale_y_date) or isinstance(scale, p9.scales.scale_y_datetime) or isinstance(scale, p9.scales.scale_y_discrete) or isinstance(scale, p9.scales.scale_y_log10) or isinstance(scale, p9.scales.scale_y_reverse) or isinstance(scale, p9.scales.scale_y_sqrt) or isinstance(scale, p9.scales.scale_y_timedelta):
+                    gate[y_label] = [scale._limits[0], scale._limits[0], scale._limits[1], scale._limits[1], scale._limits[0]]
+                    break
+
+    else:
+        if not gate.columns.isin([x_label, y_label]).all():
+            raise ValueError(f"the gate with axis '{gate.columns[0]}','{gate.columns[1]}' cannot be mapped to a plot with axis '{x_label}','{y_label}'")
+
+    # remap the x-y labels
+    if gate.columns[0] == x_label:
+        gate.columns = [x_mapping, y_mapping]
+    else:
+        gate.columns = [y_mapping, x_mapping]
+
+    plot = plot + p9.geom_path(
+        mapping=p9.aes(
+            x=x_mapping,
+            y=y_mapping
+        ),
+        inherit_aes=False,
+        data=gate,
+        color="#000000ff",
+        size=1.0
+        )
+
+    return plot
+
 class Plotter():
     """
     Main plotting class. Load it with data and ask it to generate plots from that data.
@@ -348,13 +429,15 @@ class Plotter():
         )
         return plot
 
-    def _plot_labels(self, plot: p9.ggplot, title: str=None, x: str=None, y: str=None) -> p9.ggplot:
+    def _plot_labels(self, plot: p9.ggplot, title: str=None, x: str=None, y: str=None, color: str=None, fill: str=None) -> p9.ggplot:
         """
         Adds labels to the plot
             :param plot: the plot to add the labels to
             :param title: (optional) overwrite the standard title
             :param x: (optional) overwrite the standard x label
             :param y: (optional) overwrite the standard y label
+            :param color: (optional) overwrite the standard color label
+            :param fill: (optional) overwrite the standard fill label
         """
         if title:
             plot = plot + p9.ggtitle(
@@ -377,10 +460,21 @@ class Plotter():
             except KeyError:
                 y = plot.mapping["y"]
 
+
         plot = plot + p9.labs(
             x=x, 
             y=y
         )
+
+        if color:
+            plot = plot + p9.labs(
+                color=color
+            )
+
+        if fill:
+            plot = plot + p9.labs(
+                fill=fill
+            )
 
         return plot
 
@@ -753,7 +847,7 @@ class Plotter():
         # Build the plot
         plot = self._plot_base(data_count, "__x_bin", "__y_bin", fill="__density")
         plot = self._plot_theme(plot)
-        plot = self._plot_labels(plot, title=title)
+        plot = self._plot_labels(plot, title=title, x=x, y=y, fill="density")
         plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
         plot = self._plot_fillscale(plot, fill_map=None, rescale=False)
         plot = plot + p9.geom_rect(
@@ -765,6 +859,144 @@ class Plotter():
                 ymax="__y_max"
             )
         )
+
+        return plot
+
+    def density_overlay(self, x: str, y: str, c: str, c_level: str=None, c_map: Dict=None, levels: int=15) -> p9.ggplot:
+        """
+        Builds a density raster plot while overlaying the color parameter as a density map. 
+            :param x: the x dimension
+            :param y: the y dimension
+            :param c: the c dimension
+            :param c_level: (optional) the c level/category to plot
+            :param c_map: (optional) uses the c_map to map the levels. Only used if c_level is not defined
+            :param levels: the number of geometry levels
+        """
+        self._plot_check(self.data, x=x, y=y, color=c, fill=None)
+
+        if not (pd.api.types.is_categorical_dtype(self.data[c]) or pd.api.types.is_string_dtype(self.data[c]) or pd.api.types.is_bool_dtype(self.data[c])):
+            raise ValueError(f"can only generate a density overlay of a categorical category, data in '{c}' is not categorical")
+
+        if c_level is not None and c_level not in self.data[c].unique():
+            raise ValueError(f"the level '{c_level}' cannot be found in '{c}'")
+
+        if pd.api.types.is_bool_dtype(self.data[c]):
+            if c_level is None:
+                c_level = True
+            c_name = c
+        else:
+            if c_level is None:
+                c_name = c
+            else:
+                c_name = c_level        
+
+        # get unique data parameters
+        params = pd.array([x,y]).dropna().unique()
+        data = self.data[params].copy()
+        data = data.sample(frac=1)
+
+        # Make a base of outlined dotplot
+        plot = self._plot_base(data, x, y, color=c)
+        plot = self._plot_theme(plot)
+        plot = self._plot_labels(plot, title=self.name)
+        plot = self._plot_scale(plot, xlim=True, ylim=True)
+
+        plot = plot + p9.geom_point(
+            color="#000000",
+            fill="#ffffff"
+        )
+        plot = plot + p9.geom_point(
+            color="#00000000",
+            fill="#ffffffff"
+        )
+
+        # The kernel 2dimensional density statistics effectively calculate density probabilities
+        # The othermost probability, generally falls outside the viewport. Sometimes it is partially
+        # within the viewport though. This shows up as a partially filled 'artefactly' line. 
+        # One can just hide it with the alpha channel but we should put this past the boss
+
+        # Set alpha scale range to (0.0, 1.0) to effectively hide this
+
+        # Apply mask
+        if self.mask is not None:
+            data = self.data[~self.mask]
+        else:
+            data = self.data
+
+        if c_level is not None:
+            overlay_data = data.loc[data[c] == c_level, params].copy()
+            plot += p9.stat_density_2d(
+                data=overlay_data,
+                mapping=p9.aes(
+                    x=x,
+                    y=y,
+                    fill="..level..",
+                    alpha="..level.."
+                ),
+                inherit_aes=False,
+                geom="polygon",
+                n=64,
+                levels=levels,
+                contour=True,
+                package="scipy"     
+            ) 
+
+            plot += p9.scales.scale_fill_cmap(
+                cmap_name=self.fill_map,
+                guide=p9.guide_colorbar(
+                    ticks=False
+                ),
+                na_value=self.fill_na
+            )
+        else:
+            for i, factor in enumerate(data[c].unique()):
+                # Skip NaNs
+                if pd.isnull(factor):
+                    continue
+
+                overlay_data = data.loc[data[c] == factor, params].copy()
+
+                if c_map is None:
+                    plot += p9.stat_density_2d(
+                        data=overlay_data,
+                        mapping=p9.aes(
+                            x=x,
+                            y=y,
+                            alpha="..level.."
+                        ),
+                        fill=self.tab20[i],
+                        inherit_aes=False,
+                        geom="polygon",
+                        n=64,
+                        levels=levels,
+                        contour=True,
+                        package="scipy"     
+                    ) 
+                else:
+                    plot += p9.stat_density_2d(
+                        data=overlay_data,
+                        mapping=p9.aes(
+                            x=x,
+                            y=y,
+                            alpha="..level.."
+                        ),
+                        fill=c_map[factor],
+                        inherit_aes=False,
+                        geom="polygon",
+                        n=64,
+                        levels=levels,
+                        contour=True,
+                        package="scipy"     
+                    )
+
+        plot += p9.scales.scale_alpha_continuous(
+            range=(0.1,1),
+            expand=(0,0),
+            guide=False
+        )
+        plot += p9.labs(
+            fill=c_name
+        ) 
 
         return plot
 
@@ -871,6 +1103,7 @@ class Plotter():
             data_stat = data_indexed.std()
         else:
             raise ValueError(f"'{c_stat}' c_stat is an unknown operation")
+        c_label = c_name[2:]
 
         # Remove multi-index
         data_stat.columns = [c_name]
@@ -893,7 +1126,7 @@ class Plotter():
         # Build the plot
         plot = self._plot_base(data_stat, "__x_bin", "__y_bin", fill=c_name)
         plot = self._plot_theme(plot)
-        plot = self._plot_labels(plot, title=title)
+        plot = self._plot_labels(plot, title=title, x=x, y=y, fill=c_label)
         plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
         plot = self._plot_fillscale(plot, rescale=c_rescale, fill_map=c_map)
         plot = plot + p9.geom_rect(
@@ -994,6 +1227,7 @@ class Plotter():
             data_stat = data_indexed.std()
         else:
             raise ValueError(f"'{c_stat}' c_stat is an unknown operation")
+        c_label = c_name[2:]
 
         # Remove multi-index
         data_stat.columns = [c_name]
@@ -1046,7 +1280,7 @@ class Plotter():
 
             plot = self._plot_base(frame, "__x_bin", "__y_bin", fill=c_name)
             plot = self._plot_theme(plot)
-            plot = self._plot_labels(plot, title=title, x=x_name, y=y_name)
+            plot = self._plot_labels(plot, title=title, x=x_name, y=y_name, fill=c_label)
             plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
             # force equal colorscale between frames by custom setting of limits
             plot = plot + p9.scales.scale_fill_cmap(
@@ -1068,223 +1302,6 @@ class Plotter():
             plots.append(plot)
 
         return plots
-
-    def show_3d(self, x: str, y: str, z: str, c: str=None, c_stat: str="mean", bins: int=128, c_map: dict=None) -> None:
-        """
-        Creates a 3dimensional matplotlib figure object with the correct data and axis
-            :param x: the x dimension
-            :param y: the y dimension
-            :param z: the z dimension
-            :param c: the c dimension - used for color mapping. If None will represent the event density
-            :param c_stat: the c statistic to calculate, choose from ["max", "min", "sum", "mean", "median", "mode", "var", "std"]
-            :param bins: the number of bins per xyz dimension.
-            :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
-        """
-        self._plot_check(self.data, x, y, c, fill=None)
-
-        if not (self.data.columns == z).any():
-            raise ValueError(f"z '{z}' does not specify columns in .data")
-        if not pd.api.types.is_numeric_dtype(self.data[z]):
-            raise ValueError(f"z '{z}' must be a numeric dtype")
-        
-        if c_stat not in ["max", "min", "sum", "mean", "median", "mode", "var", "std"]:
-            raise ValueError(f"binning has no implementation for c_stat '{c_stat}'")
-
-        # Get all data from unique parameters
-        params = pd.array([x,y,z,c]).dropna().unique()
-        data = self.data[params].copy()
-
-        # mask the data
-        if self.mask is not None:
-            if self.mask_type != "remove":
-                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
-            data = data.loc[~self.mask]
-
-        # Cut into bins
-        data["__x_bin"] = self._bin(x, bins=bins)
-        data["__y_bin"] = self._bin(y, bins=bins)
-        data["__z_bin"] = self._bin(z, bins=bins)
-
-        if c is None:
-            data = data[["__x_bin", "__y_bin", "__z_bin"]]
-        else:
-            data = data[["__x_bin", "__y_bin", "__z_bin", c]]
-
-        # Calculate per group
-        data_indexed = data.groupby(by=["__x_bin","__y_bin", "__z_bin"], axis=0, sort=False, dropna=True)
-
-        if c is None:
-            c_name = "__density"
-            c_rescale = True
-            data_stat = data.value_counts(sort=False)
-            data_stat.name = c_name
-        elif c_stat == "max":
-            c_name = f"__max({c})"
-            c_rescale = False
-            data_stat = data_indexed.max()
-        elif c_stat == "min":
-            c_name = f"__min({c})"
-            c_rescale = False
-            data_stat = data_indexed.min()
-        elif c_stat == "sum":
-            c_name = f"__sum({c})"
-            c_rescale = False
-            data_stat = data_indexed.sum()
-        elif c_stat == "mean":
-            c_name = f"__mean({c})"
-            c_rescale = True
-            data_stat = data_indexed.mean()
-        elif c_stat == "median":
-            c_name = f"__median({c})"
-            c_rescale = True
-            data_stat = data_indexed.mean()
-        elif c_stat == "mode":
-            c_name = f"__mode({c})"
-            c_rescale = True
-            data_stat = data_indexed.mean()
-        elif c_stat == "var":
-            c_name = f"__var({c})"
-            c_rescale = True
-            data_stat = data_indexed.std()
-        elif c_stat == "std":
-            c_name = f"__std({c})"
-            c_rescale = True
-            data_stat = data_indexed.std()
-        else:
-            raise ValueError(f"'{c_stat}' c_stat is an unknown operation")
-
-        # Remove multi-index
-        data_stat.columns = [c_name]
-        data_stat = data_stat.reset_index()
-        data_stat = data_stat.loc[~data_stat[c_name].isna()]
-
-        data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
-        data_stat["__y_bin"] = data_stat["__y_bin"].astype("float64")
-        data_stat["__z_bin"] = data_stat["__z_bin"].astype("float64")
-
-        cmap = "nipy_spectral"
-
-        # manually set colors to allow for proper rescaling
-        if pd.api.types.is_numeric_dtype(data_stat[c_name]):
-            quantiles = data_stat[c_name].quantile([0.0, 0.02, 0.98, 1.0])
-            if c_rescale:
-                min_color = quantiles[0.02]
-                max_color = quantiles[0.98]
-            else:
-                min_color = quantiles[0.0]
-                max_color = quantiles[1.0]
-            ratio_color = 1 / (max_color - min_color)
-
-            colormap = plt.get_cmap(cmap)
-            data_stat[c_name] = data_stat[c_name].apply(lambda x: (x - min_color) * ratio_color)
-            data_stat[c_name] = data_stat[c_name].apply(lambda x: colormap(0 if x < 0 else (0.9999999 if x >= 1 else x), alpha=1))
-        elif pd.api.types.is_string_dtype(data[c_name]):
-
-            levels = data_stat[c_name].unique()
-            levels = levels[~pd.isnull(levels)]
-            if c_map:
-                # Check if colormap covers all cases
-                for level in levels:
-                    if level not in c_map:
-                        raise ValueError(f"level '{level}' undefined in c_map")
-                c_map["nan"] = self.color_na
-                data_stat[c_name] = data_stat[c_name].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
-
-            elif len(levels) <= 10:
-                c_map = plt.get_cmap("tab10")
-                c_map = dict(zip(levels, c_map.colors[:len(levels)]))
-                c_map["nan"] = self.color_na
-                data_stat[c_name] = data_stat[c_name].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
-               
-            else:
-                # Use default
-                pass
-
-        # Approximate dot size
-        dot_size = (self.transforms[x].l_end - self.transforms[x].l_start) / bins
-        dot_size = 1 if dot_size < 1 else dot_size
-
-        # construct matplotlib figure and axes objects
-        figure = plt.figure(figsize=(12.8, 9.6))
-        axes = figure.add_subplot(111, projection="3d", facecolor="#EEEEEEFF")
-        axes.scatter(
-            xs=data_stat["__x_bin"],
-            ys=data_stat["__y_bin"],
-            zs=data_stat["__z_bin"],
-            c=data_stat[c_name],
-            zdir="y",
-            depthshade=True,    # dont turn off - bug in matplotlib
-            marker="s",
-            s=dot_size,
-            alpha=1
-        )
-
-        # Set axis ticks / scale / labels
-        axes.set_xlim((self.transforms[x].l_start, self.transforms[x].l_end))
-        axes.set_ylim((self.transforms[y].l_start, self.transforms[y].l_end))
-        axes.set_zlim((self.transforms[z].l_start, self.transforms[z].l_end))
-
-        try:
-            axis_transform = self.transforms[x]
-        except ValueError:
-            pass
-        else:
-            # so apparently a specific plot-x can only have a single label
-            major_ticks = np.array(axis_transform.major_ticks())
-            labels = np.array(axis_transform.labels())
-            axes.set_xticks(ticks=major_ticks, minor=False)
-            axes.set_xticklabels(labels=labels)
-            axes.set_xticks(ticks=axis_transform.minor_ticks(), minor=True)
-        try:
-            axes.set_xlabel(self.labels[x])
-        except KeyError:
-            axes.set_xlabel(x)
-        
-        # Somehow y <-> z axis are swapped, correct for this
-        try:
-            axis_transform = self.transforms[y]
-        except ValueError:
-            pass
-        else:
-            major_ticks = np.array(axis_transform.major_ticks())
-            unique = np.unique(major_ticks, return_index=True)[1]
-            labels = np.array(axis_transform.labels())
-            axes.set_zticks(ticks=major_ticks[unique], minor=False)
-            axes.set_zticklabels(labels=labels[unique])
-            axes.set_zticks(ticks=axis_transform.minor_ticks(), minor=True)
-        try:
-            axes.set_zlabel(self.labels[y])
-        except KeyError:
-            axes.set_zlabel(y)
-        
-        try:
-            axis_transform = self.transforms[z]
-        except ValueError:
-            pass
-        else:
-            major_ticks = np.array(axis_transform.major_ticks())
-            unique = np.unique(major_ticks, return_index=True)[1]
-            labels = np.array(axis_transform.labels())
-            axes.set_yticks(ticks=major_ticks[unique], minor=False)
-            axes.set_yticklabels(labels=labels[unique])
-            axes.set_yticks(ticks=axis_transform.minor_ticks(), minor=True)
-        try:
-            axes.set_ylabel(self.labels[z])
-        except KeyError:
-            axes.set_ylabel(z)
-
-        # theming
-        if self.name:
-            axes.set_title(self.name)
-        
-        axes.grid(True, which="major")
-        axes.grid(False, which="minor")
-        #dont think these parameters work... :(
-        #axes.set_tick_params(which="major", direction="out", width=2.0, lenght=4.0)
-        #axes.set_tick_params(which="minor", direction="out", width=1.0, length=2.0)
-        axes.view_init(elev=0,azim=-90)
-       
-        plt.show()
 
     def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, min_events: int=4) -> p9.ggplot:
         """
@@ -1605,7 +1622,7 @@ class Plotter():
         )
 
         # plot the line and polygons according to color mapping
-        for i_key in data:
+        for i, i_key in enumerate(list(data.keys())):
             if c_map:
                 plot += p9.geom_path(
                     data=data[i_key],
@@ -1616,13 +1633,22 @@ class Plotter():
                 )
 
             else:
-                plot += p9.geom_path(
-                    data=data[i_key],
-                    mapping=p9.aes(x="__x", y=x),
-                    color="#000000",
-                    inherit_aes=False,
-                    size=1.0
-                )
+                if len(data.keys()) <= 20:
+                    plot += p9.geom_path(
+                        data=data[i_key],
+                        mapping=p9.aes(x="__x", y=x),
+                        color=self.tab20[i],
+                        inherit_aes=False,
+                        size=1.0
+                    )
+                else:
+                    plot += p9.geom_path(
+                        data=data[i_key],
+                        mapping=p9.aes(x="__x", y=x),
+                        color="#000000",
+                        inherit_aes=False,
+                        size=1.0
+                    )
 
             poly_start = data[i_key].iloc[0].copy()
             poly_end = data[i_key].iloc[-1].copy()
@@ -1640,15 +1666,241 @@ class Plotter():
                     inherit_aes=False
                 )
             else:
-                plot += p9.geom_polygon(
-                    data = poly_data,
-                    mapping=p9.aes(x="__x", y=x),
-                    color="#00000000",
-                    fill="#00000050",
-                    inherit_aes=False
-                )              
+                if len(data.keys()) <= 20:
+                    plot += p9.geom_polygon(
+                        data = poly_data,
+                        mapping=p9.aes(x="__x", y=x),
+                        color="#00000000",
+                        fill=self.tab20[i] + "50",
+                        inherit_aes=False
+                    )    
+                else:
+                    plot += p9.geom_polygon(
+                        data = poly_data,
+                        mapping=p9.aes(x="__x", y=x),
+                        color="#00000000",
+                        fill="#00000050",
+                        inherit_aes=False
+                    )              
 
         return plot
+
+    def show_3d(self, x: str, y: str, z: str, c: str=None, c_stat: str="mean", bins: int=128, c_map: dict=None) -> None:
+        """
+        Creates a 3dimensional matplotlib figure object with the correct data and axis
+            :param x: the x dimension
+            :param y: the y dimension
+            :param z: the z dimension
+            :param c: the c dimension - used for color mapping. If None will represent the event density
+            :param c_stat: the c statistic to calculate, choose from ["max", "min", "sum", "mean", "median", "mode", "var", "std"]
+            :param bins: the number of bins per xyz dimension.
+            :param c_map: only used for factorized color parameters. Uses the c_map to map the levels
+        """
+        self._plot_check(self.data, x, y, c, fill=None)
+
+        if not (self.data.columns == z).any():
+            raise ValueError(f"z '{z}' does not specify columns in .data")
+        if not pd.api.types.is_numeric_dtype(self.data[z]):
+            raise ValueError(f"z '{z}' must be a numeric dtype")
+        
+        if c_stat not in ["max", "min", "sum", "mean", "median", "mode", "var", "std"]:
+            raise ValueError(f"binning has no implementation for c_stat '{c_stat}'")
+
+        # Get all data from unique parameters
+        params = pd.array([x,y,z,c]).dropna().unique()
+        data = self.data[params].copy()
+
+        # mask the data
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
+
+        # Cut into bins
+        data["__x_bin"] = self._bin(x, bins=bins)
+        data["__y_bin"] = self._bin(y, bins=bins)
+        data["__z_bin"] = self._bin(z, bins=bins)
+
+        if c is None:
+            data = data[["__x_bin", "__y_bin", "__z_bin"]]
+        else:
+            data = data[["__x_bin", "__y_bin", "__z_bin", c]]
+
+        # Calculate per group
+        data_indexed = data.groupby(by=["__x_bin","__y_bin", "__z_bin"], axis=0, sort=False, dropna=True)
+
+        if c is None:
+            c_name = "__density"
+            c_rescale = True
+            data_stat = data.value_counts(sort=False)
+            data_stat.name = c_name
+        elif c_stat == "max":
+            c_name = f"__max({c})"
+            c_rescale = False
+            data_stat = data_indexed.max()
+        elif c_stat == "min":
+            c_name = f"__min({c})"
+            c_rescale = False
+            data_stat = data_indexed.min()
+        elif c_stat == "sum":
+            c_name = f"__sum({c})"
+            c_rescale = False
+            data_stat = data_indexed.sum()
+        elif c_stat == "mean":
+            c_name = f"__mean({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "median":
+            c_name = f"__median({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "mode":
+            c_name = f"__mode({c})"
+            c_rescale = True
+            data_stat = data_indexed.mean()
+        elif c_stat == "var":
+            c_name = f"__var({c})"
+            c_rescale = True
+            data_stat = data_indexed.std()
+        elif c_stat == "std":
+            c_name = f"__std({c})"
+            c_rescale = True
+            data_stat = data_indexed.std()
+        else:
+            raise ValueError(f"'{c_stat}' c_stat is an unknown operation")
+
+        # Remove multi-index
+        data_stat.columns = [c_name]
+        data_stat = data_stat.reset_index()
+        data_stat = data_stat.loc[~data_stat[c_name].isna()]
+
+        data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
+        data_stat["__y_bin"] = data_stat["__y_bin"].astype("float64")
+        data_stat["__z_bin"] = data_stat["__z_bin"].astype("float64")
+
+        cmap = "nipy_spectral"
+
+        # manually set colors to allow for proper rescaling
+        if pd.api.types.is_numeric_dtype(data_stat[c_name]):
+            quantiles = data_stat[c_name].quantile([0.0, 0.02, 0.98, 1.0])
+            if c_rescale:
+                min_color = quantiles[0.02]
+                max_color = quantiles[0.98]
+            else:
+                min_color = quantiles[0.0]
+                max_color = quantiles[1.0]
+            ratio_color = 1 / (max_color - min_color)
+
+            colormap = plt.get_cmap(cmap)
+            data_stat[c_name] = data_stat[c_name].apply(lambda x: (x - min_color) * ratio_color)
+            data_stat[c_name] = data_stat[c_name].apply(lambda x: colormap(0 if x < 0 else (0.9999999 if x >= 1 else x), alpha=1))
+        elif pd.api.types.is_string_dtype(data[c_name]):
+
+            levels = data_stat[c_name].unique()
+            levels = levels[~pd.isnull(levels)]
+            if c_map:
+                # Check if colormap covers all cases
+                for level in levels:
+                    if level not in c_map:
+                        raise ValueError(f"level '{level}' undefined in c_map")
+                c_map["nan"] = self.color_na
+                data_stat[c_name] = data_stat[c_name].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
+
+            elif len(levels) <= 10:
+                c_map = plt.get_cmap("tab10")
+                c_map = dict(zip(levels, c_map.colors[:len(levels)]))
+                c_map["nan"] = self.color_na
+                data_stat[c_name] = data_stat[c_name].apply(lambda x: self.color_na if pd.isnull(x) else c_map[x])
+               
+            else:
+                # Use default
+                pass
+
+        # Approximate dot size
+        dot_size = (self.transforms[x].l_end - self.transforms[x].l_start) / bins
+        dot_size = 1 if dot_size < 1 else dot_size
+
+        # construct matplotlib figure and axes objects
+        figure = plt.figure(figsize=(12.8, 9.6))
+        axes = figure.add_subplot(111, projection="3d", facecolor="#EEEEEEFF")
+        axes.scatter(
+            xs=data_stat["__x_bin"],
+            ys=data_stat["__y_bin"],
+            zs=data_stat["__z_bin"],
+            c=data_stat[c_name],
+            zdir="y",
+            depthshade=True,    # dont turn off - bug in matplotlib
+            marker="s",
+            s=dot_size,
+            alpha=1
+        )
+
+        # Set axis ticks / scale / labels
+        axes.set_xlim((self.transforms[x].l_start, self.transforms[x].l_end))
+        axes.set_ylim((self.transforms[y].l_start, self.transforms[y].l_end))
+        axes.set_zlim((self.transforms[z].l_start, self.transforms[z].l_end))
+
+        try:
+            axis_transform = self.transforms[x]
+        except ValueError:
+            pass
+        else:
+            # so apparently a specific plot-x can only have a single label
+            major_ticks = np.array(axis_transform.major_ticks())
+            labels = np.array(axis_transform.labels())
+            axes.set_xticks(ticks=major_ticks, minor=False)
+            axes.set_xticklabels(labels=labels)
+            axes.set_xticks(ticks=axis_transform.minor_ticks(), minor=True)
+        try:
+            axes.set_xlabel(self.labels[x])
+        except KeyError:
+            axes.set_xlabel(x)
+        
+        # Somehow y <-> z axis are swapped, correct for this
+        try:
+            axis_transform = self.transforms[y]
+        except ValueError:
+            pass
+        else:
+            major_ticks = np.array(axis_transform.major_ticks())
+            unique = np.unique(major_ticks, return_index=True)[1]
+            labels = np.array(axis_transform.labels())
+            axes.set_zticks(ticks=major_ticks[unique], minor=False)
+            axes.set_zticklabels(labels=labels[unique])
+            axes.set_zticks(ticks=axis_transform.minor_ticks(), minor=True)
+        try:
+            axes.set_zlabel(self.labels[y])
+        except KeyError:
+            axes.set_zlabel(y)
+        
+        try:
+            axis_transform = self.transforms[z]
+        except ValueError:
+            pass
+        else:
+            major_ticks = np.array(axis_transform.major_ticks())
+            unique = np.unique(major_ticks, return_index=True)[1]
+            labels = np.array(axis_transform.labels())
+            axes.set_yticks(ticks=major_ticks[unique], minor=False)
+            axes.set_yticklabels(labels=labels[unique])
+            axes.set_yticks(ticks=axis_transform.minor_ticks(), minor=True)
+        try:
+            axes.set_ylabel(self.labels[z])
+        except KeyError:
+            axes.set_ylabel(z)
+
+        # theming
+        if self.name:
+            axes.set_title(self.name)
+        
+        axes.grid(True, which="major")
+        axes.grid(False, which="minor")
+        #dont think these parameters work... :(
+        #axes.set_tick_params(which="major", direction="out", width=2.0, lenght=4.0)
+        #axes.set_tick_params(which="minor", direction="out", width=1.0, length=2.0)
+        axes.view_init(elev=0,azim=-90)
+       
+        plt.show()
 
     ## algorithms
     def _bin(self, x: str, bins: int) -> pd.Categorical:
@@ -1721,6 +1973,7 @@ class Plotter():
         # Scale data per sample
         data_samples = [y for x, y in self.data.groupby("__sample")]
 
+        umap_norm = {}
         for sample in data_samples:
             # Standard/RobustScaler - they centralize based on mean/median. In flowcytometry data
             # we cannot assume that the distributions (generalize as a mix of two gaussians) shows equal/between sample
@@ -1729,16 +1982,28 @@ class Plotter():
             # The mean of the quantiles will likely give a distribution agnostic centralisation.
             # Other option would be the geoMean, but that is quite influenced by the outliers
 
+            # Get sample id for metadata storage
+            sample_id = sample["__sample"].iloc[0]
+            sample_scale = pd.DataFrame(columns=("q_0", "q_1", "q_mean"))
+
             # scale
             quantiles = sample[parameters].quantile(q=q)
+            sample_scale["q_0"] = quantiles.loc[q[0]]
+            sample_scale["q_1"] = quantiles.loc[q[1]]
             
             sample[parameters] = (sample[parameters] - quantiles.loc[q[0]]) / (quantiles.loc[q[1]] - quantiles.loc[q[0]])
 
             # Center
             quantiles = sample[parameters].quantile(q=q)
             q_mean = quantiles.mean()
+            sample_scale["q_mean"] = q_mean
             
             sample[parameters] = sample[parameters] - q_mean
+
+            # Add normalization metadata
+            umap_norm[sample_id] = sample_scale
+
+        self.metadata["__umap_scalers"] = umap_norm
 
         scaled_data = pd.concat(data_samples)
 

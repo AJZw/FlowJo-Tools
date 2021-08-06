@@ -423,18 +423,27 @@ class _RectangleGating(_AbstractGating):
             :param transform_y: (optional) a transformation object defining the transformation of the y-dimension
             :returns: a one (if transform_y is None) or two dimensional polygon representation of the gate
         """
-        x_min = -1 if self.min_x is None else self.min_x
-        x_max = 1024 if self.max_x is None else self.max_x
-        y_min = -1 if self.min_y is None else self.min_y
-        y_max = 1024 if self.max_y is None else self.max_y
-
-        x = [x_min, x_max, x_max, x_min, x_min]
-        y = [y_max, y_max, y_min, y_min, y_max]
-
+        x = [self.min_x, self.max_x, self.max_x, self.min_x, self.min_x]
         channel_x = transform_x.scaler(x)
-    
+
+        if self.min_x is None:
+            channel_x[0] = transform_x.l_start
+            channel_x[3] = transform_x.l_start
+            channel_x[4] = transform_x.l_start
+        if self.max_x is None:
+            channel_x[1] = transform_x.l_end
+            channel_x[2] = transform_x.l_end
+           
         if transform_y is not None:
+            y = [self.max_y, self.max_y, self.min_y, self.min_y, self.max_y]
             channel_y = transform_y.scaler(y)
+            if self.min_y is None:
+                channel_y[2] = transform_y.l_start
+                channel_y[3] = transform_y.l_start
+            if self.max_y is None:
+                channel_y[0] = transform_y.l_end
+                channel_y[1] = transform_y.l_end
+                channel_y[4] = transform_y.l_end
         
             polygon = pd.DataFrame(list(zip(channel_x, channel_y)))
             polygon.columns = [self.dimension_x, self.dimension_y]
@@ -816,7 +825,7 @@ class Cytometer():
                     scale = BiexTransform(
                         l_start=CHANNEL_MIN,
                         l_end=CHANNEL_MAX,
-                        g_end=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
+                        g_end=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
                         neg_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}neg"]),
                         width=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}width"]),
                         pos_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}pos"]),
@@ -931,7 +940,7 @@ class Sample():
                 scale = BiexTransform(
                     l_start=CHANNEL_MIN,
                     l_end=CHANNEL_MAX,
-                    g_end=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
+                    g_end=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
                     neg_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}neg"]),
                     width=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}width"]),
                     pos_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}pos"]),
