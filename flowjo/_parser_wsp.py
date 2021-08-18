@@ -24,7 +24,7 @@
 """
 Allows for reading of FlowJo workspace (.wsp) files. These functions directly 
 parse the FlowJo wsp XML files into storage classes. These classes are not ment
-for direct usebility as they represent the xml version very closely. Use the
+for direct usage as they represent the xml version very closely. Use the
 wsp Module as the interface. 
 
 Flow Cytometry data has to be handled in the following order:
@@ -49,6 +49,16 @@ A class representing a gate node
 .x          - the gate x-dimension
 .y          - the gate y-dimension
 
+:class: Stat
+A class representing a statistics node
+.name       - the statistics name
+.annotation - the statistics annotation
+.owning_group - the group that owns this statistics
+.value      - the calculated statistic
+.ancestor   - (optional) the ancestor used for statistic calculation
+.id         - (optional) the parameter the statistic is calculated on
+.percent    - (optional) the percentile the percentile statistic is calculated on
+
 :class: _AbstractGating
 An abstract class providing basic gate type properties (like rectangle, ellipse, polygon gates etc)
 .space      - specifyer whether this gate is specified in 'scale' or 'channel' data, 
@@ -64,15 +74,15 @@ An abstract class providing basic gate type properties (like rectangle, ellipse,
 .polygon()  - build the gate outline in the shape of a polygon adhering to the x/y transformation
 
 :class: _RectangleGating
-A representation of a rectangle gate. This includes Square and Quad gates.
+A representation of a rectangle gate. This includes Square, Quad, and Range gates.
 (see _AbstractGating for attributes and functions)
 
 :class: _PolygonGating
-A representation of a rectangle gate. This includes Square and Quad gates.
+A representation of a polygon gate.
 (see _AbstractGating for attributes and functions)
 
 :class: _EllipsoidGating
-A representation of a rectangle gate. This includes Square and Quad gates.
+A representation of a ellipsoid gate.
 (see _AbstractGating for attributes and functions)
 
 :class: Cytometer
@@ -142,15 +152,14 @@ The main parser of a workspace (.wsp) file
 """
 
 from __future__ import annotations
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from lxml import etree
 
-from .data import _Abstract
 from .transform import _Abstract as _AbstractTransform, Linear as LinearTransform, Biex as BiexTransform, Log10 as Log10Transform
+from .transform import Fasinh as FasinhTransform, Hyperlog as HyperlogTransform, Logicle as LogicleTransform
 from .matrix import MTX
 
-import matplotlib as mpl
 import matplotlib.path as mpl_path
 import pandas as pd
 import numpy as np
@@ -161,28 +170,73 @@ import os
 CHANNEL_MIN = 0
 CHANNEL_MAX = 1023
 
-class Gate:
+class AbstractGate:
     """
-    A representation of a gate node / 'Population' element
-        :param element: the Population element
+    Abstract representation of a gate node
+        :param element: the gate node element
     """
     def __init__(self, element: etree._Element) -> None:
-        self.id: str = None
         self.name: str = None
         self.annotation: str = None
         self.owning_group: str = None
+
+        self.gates: Dict[str, Union[AbstractGate, StatGate]] = {}
+
+        AbstractGate._parse(self, element)
+
+    def _parse(self, element: etree._Element) -> None:
+        """
+        Parses all abstract gate properties
+            :param element: a gate node element
+        """
+        self.name = element.attrib["name"]
+        self.annotation = element.attrib["annotation"]
+        self.owning_group = element.attrib["owningGroup"]
+
+        # Find subgates
+        gates: List[etree._Element] = element.find("Subpopulations")
+
+        if gates is None:
+            return
+
+        # Parse all subelements as they all should contain gate information, boolean transforms have unique tags
+        for gate in gates:
+            if gate.tag == "Population":
+                gate = Gate(gate)
+                self.gates[gate.id] = gate
+            elif gate.tag == "NotNode":
+                gate = NotGate(gate)
+                self.gates[gate.id] = gate
+            elif gate.tag == "OrNode":
+                gate = OrGate(gate)
+                self.gates[f"Or_{len(self.gates)}"] = gate
+            elif gate.tag == "AndNode":
+                gate = AndGate(gate)
+                self.gates[f"And_{len(self.gates)}"] = gate
+            elif gate.tag == "Statistic":
+                stat = StatGate(gate)
+                self.gates[f"Stat_{len(self.gates)}"] = stat
+            else:
+                raise NotImplementedError(f"Unimplemented node type '{gate.tag}' in '{self.name}'. Please contact author.")
+
+    def __repr__(self) -> str:
+        return "(AbstractGate)"
+
+class Gate(AbstractGate):
+    """
+    A representation of a node / 'Population' element
+        :param element: the Population element
+    """
+    def __init__(self, element: etree._Element) -> None:
+        super().__init__(element)
+        self.id: str = None
+        self.parent_id: str = None
+
         self.count: int = None
 
-        self.gates: Dict[str, Gate] = {}
-
-        # Store boolean transform information
-        self.boolean: str = None
-        self.dependents: List[str] = []
-
-        # Stores the actual gating information
         self._gating: _AbstractGating = None
 
-        self._parse(element)
+        Gate._parse(self, element)
 
     @property
     def x(self) -> str:
@@ -203,22 +257,11 @@ class Gate:
         Parses all abstract gate properties
             :param element: 'Population' element or boolean node elements
         """
-        self.name = element.attrib["name"]
-        self.annotation = element.attrib["annotation"]
-        self.owning_group = element.attrib["owningGroup"]
         self.count = int(element.attrib["count"])
-
-        if element.tag == "Population":
-            pass
-        elif element.tag == "NotNode":
-            self.boolean = "not"
-            self.dependents = [element.attrib["name"] for element in element.findall("Dependents/Dependent")]
-
-        else:
-            raise NotImplementedError(f"unimplemented node type '{element.tag}'")
 
         gate = element.find("Gate")
         self.id = gate.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/gating}id"]
+        
         try:
             self.parent_id = gate.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/gating}parent_id"]
         except KeyError:
@@ -234,17 +277,6 @@ class Gate:
             self._gating = _RectangleGating(gate[0])
         else:
             raise NotImplementedError(f"unimplemented gating type '{gate[0].tag}' in {self.name}")
-        
-        # Find subgates
-        gates = element.find("Subpopulations")
-
-        if gates is None:
-            return
-
-        # Parse all subelements as they all should contain gate information, boolean transforms have unique tags
-        for gate in gates:
-            gate = Gate(gate)
-            self.gates[gate.id] = gate
 
     def __repr__(self) -> str:
         if isinstance(self._gating, _RectangleGating):
@@ -254,7 +286,120 @@ class Gate:
         elif isinstance(self._gating, _PolygonGating):
             return f"(PolygonGate:{self.id})"
         else:
-            return f"(Unknown Gate:{self.id})"
+            return f"(UnknownGate:{self.id})"
+
+class NotGate(Gate):
+    """
+    A representation of a not node / 'NotNode' element
+        :param element: the NotNode element
+    """
+    def __init__(self, element: etree._Element) -> None:
+        super().__init__(element)
+        self.dependents: List[str] = []
+
+        NotGate._parse(self, element)
+
+    def _parse(self, element: etree._Element) -> None:
+        """
+        Parses all abstract gate properties
+            :param element: 'NotNode' element
+        """
+        self.dependents = [element.attrib["name"] for element in element.findall("Dependents/Dependent")]
+
+    def __repr__(self) -> str:
+        return f"(NotGate:{self.id})"
+
+class OrGate(AbstractGate):
+    """
+    A representation of a OrGate node
+        :param element: the gate node element
+    """
+    def __init__(self, element: etree._Element) -> None:
+        super().__init__(element)
+        self.count: int = None
+        self.dependents: List[str] = []
+
+        OrGate._parse(self, element)
+
+    def _parse(self, element: etree._Element) -> None:
+        """
+        Parses the OrGate properties
+            :param element: a OrGate node element
+        """
+        self.count = int(element.attrib["count"])
+        self.dependents = [element.attrib["name"] for element in element.findall("Dependents/Dependent")]
+
+    def __repr__(self) -> str:
+        return f"(OrGate)"
+
+class AndGate(AbstractGate):
+    """
+    A representation of a AndGate node
+        :param element: the gate node element
+    """
+    def __init__(self, element: etree._Element) -> None:
+        super().__init__(element)
+        self.count: int = None
+        self.dependents: List[str] = []
+
+        AndGate._parse(self, element)
+
+    def _parse(self, element: etree._Element) -> None:
+        """
+        Parses the AndGate properties
+            :param element: a AndGate node element
+        """
+        self.count = int(element.attrib["count"])
+        self.dependents = [element.attrib["name"] for element in element.findall("Dependents/Dependent")]
+
+    def __repr__(self) -> str:
+        return "(AndGate)"
+
+class StatGate(AbstractGate):
+    """
+    A representation of a stat node / 'Statistic' element
+    """
+    def __init__(self, element: etree._Element) -> None:
+        super().__init__(element)
+
+        # Statistics type/name dependent values
+        self.ancestor: str = None
+        self.id: str = None
+        self.percent: float = None
+
+        #FlowJo calculated value
+        self.value: float = None
+
+        StatGate._parse(self, element)
+
+    def _parse(self, element: etree._Element) -> None:
+        """
+        Parses all statistics node properties
+            :param element: 'Statistic' element
+        """
+        self.ancestor = element.attrib["ancestor"]
+        self.value = float(element.attrib["value"])
+
+        # Get statistics type/name specific values
+        try:
+            self.id = element.attrib["id"]
+        except KeyError:
+            pass
+
+        if self.name == "Percentile":
+            self.percent = float(element.attrib["percent"])
+
+    def __repr__(self) -> str:
+        if self.name == "fj.stat.freqofgrandparent":
+            return "(Stat:Freq Of Grandparent)"
+        elif self.name == "fj.stat.freqofparent":
+            return "(Stat:Freq Of Parent)"
+        elif self.name == "fj.stat.freqof":
+            return "(Stat:Freq Of)"
+        elif self.name == "fj.stat.freqoftotal":
+            return "(Stat:Freq Of Total)"
+        else:
+            return f"(Stat:{self.name})"
 
 class _AbstractGating:
     """
@@ -810,8 +955,6 @@ class Cytometer():
                         g_end=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
                         gain=float(transform.attrib["gain"])
                     )
-                    name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
-                    self.transforms[identifier][name] = scale
                 elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}log":
                     scale = Log10Transform(
                         l_start=CHANNEL_MIN,
@@ -819,8 +962,6 @@ class Cytometer():
                         g_start=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}offset"]),
                         g_end=int(10**float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}decades"]))
                     )
-                    name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
-                    self.transforms[identifier][name] = scale
                 elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}biex":
                     scale = BiexTransform(
                         l_start=CHANNEL_MIN,
@@ -831,10 +972,43 @@ class Cytometer():
                         pos_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}pos"]),
                         length=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}length"])
                     )
-                    name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
-                    self.transforms[identifier][name] = scale
+                elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}fasinh":
+                    scale = FasinhTransform(
+                        l_start=CHANNEL_MIN,
+                        l_end=CHANNEL_MAX,
+                        t=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}T"]),
+                        m=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}M"]),
+                        a=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}A"]),
+                        w=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}W"]),
+                        length=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}length"])
+                    )
+                elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}hyperlog":
+                    scale = HyperlogTransform(
+                        l_start=CHANNEL_MIN,
+                        l_end=CHANNEL_MAX,
+                        t=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}T"]),
+                        m=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}M"]),
+                        a=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}A"]),
+                        w=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}W"]),
+                        length=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}length"])
+                    )
+                elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}logicle":
+                    scale = LogicleTransform(
+                        l_start=CHANNEL_MIN,
+                        l_end=CHANNEL_MAX,
+                        t=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}T"]),
+                        m=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}M"]),
+                        a=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}A"]),
+                        w=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}W"])
+                    )
+                elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}miltenyi":
+                    print("WARNING: miltenyi transformation is not implemented. Transformation is ignored.")
+                    continue
                 else:
-                    raise ValueError(f"Cytometer of cannot parse transform of type {transform.tag}")
+                    raise ValueError(f"cannot parse transform of type {transform.tag}")
+
+                name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
+                self.transforms[identifier][name] = scale
 
     def __repr__(self) -> str:
         return f"(Cytometer:{self.cyt})"
@@ -925,8 +1099,6 @@ class Sample():
                     g_end=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}maxRange"]),
                     gain=float(transform.attrib["gain"])
                 )
-                name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
-                self.transforms[name] = scale
             elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}log":
                 scale = Log10Transform(
                     l_start=CHANNEL_MIN,
@@ -934,8 +1106,6 @@ class Sample():
                     g_start=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}offset"]),
                     g_end=int(10**float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}decades"]))
                 )
-                name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
-                self.transforms[name] = scale
             elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}biex":
                 scale = BiexTransform(
                     l_start=CHANNEL_MIN,
@@ -946,10 +1116,43 @@ class Sample():
                     pos_decade=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}pos"]),
                     length=int(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}length"])
                 )
-                name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
-                self.transforms[name] = scale
+            elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}fasinh":
+                scale = FasinhTransform(
+                    l_start=CHANNEL_MIN,
+                    l_end=CHANNEL_MAX,
+                    t=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}T"]),
+                    m=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}M"]),
+                    a=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}A"]),
+                    w=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}W"]),
+                    length=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}length"])
+                )
+            elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}hyperlog":             
+                scale = HyperlogTransform(
+                    l_start=CHANNEL_MIN,
+                    l_end=CHANNEL_MAX,
+                    t=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}T"]),
+                    m=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}M"]),
+                    a=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}A"]),
+                    w=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}W"]),
+                    length=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}length"])
+                )
+            elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}logicle":
+                scale = LogicleTransform(
+                    l_start=CHANNEL_MIN,
+                    l_end=CHANNEL_MAX,
+                    t=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}T"]),
+                    m=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}M"]),
+                    a=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}A"]),
+                    w=float(transform.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}W"])
+                )
+            elif transform.tag == "{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}miltenyi":
+                print("WARNING: miltenyi transformation is not implemented. Transformation is ignored.")
+                continue
             else:
-                raise ValueError(f"Cytometer of cannot parse transform of type {transform.tag}")
+                raise ValueError(f"Cannot parse transform of type {transform.tag}")
+
+            name = transform.find("{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}parameter").attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}name"]
+            self.transforms[name] = scale
 
         # Keywords
         keywords = element.find("Keywords")
@@ -965,15 +1168,30 @@ class Sample():
         self.count = sample_node.attrib["count"]
 
         # Add gates
-        gates = sample_node.find("Subpopulations")
+        gates: List[etree._Element] = sample_node.find("Subpopulations")
 
         if gates is None:
             return
 
         # Parse all subelements as they all should contain gate information, boolean transforms have unique tags
         for gate in gates:
-            gate = Gate(gate)
-            self.gates[gate.id] = gate
+            if gate.tag == "Population":
+                gate = Gate(gate)
+                self.gates[gate.id] = gate
+            elif gate.tag == "NotNode":
+                gate = NotGate(gate)
+                self.gates[gate.id] = gate
+            elif gate.tag == "OrNode":
+                gate = OrGate(gate)
+                self.gates[f"Or_{len(self.gates)}"] = gate
+            elif gate.tag == "AndNode":
+                gate = AndGate(gate)
+                self.gates[f"And_{len(self.gates)}"] = gate
+            elif gate.tag == "Statistic":
+                stat = StatGate(gate)
+                self.gates[f"Stat_{len(self.gates)}"] = stat
+            else:
+                raise NotImplementedError(f"Unimplemented node type '{gate.tag}' in '{self.name}'. Please contact author.")
 
     def __repr__(self) -> str:
         return f"(Sample:{self.id}:{self.name})"

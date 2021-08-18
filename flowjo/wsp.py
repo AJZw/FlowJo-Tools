@@ -1,5 +1,5 @@
 ##############################################################################     ##    ######
-#    A.J. Zwijnenburg                   2021-04-16           v1.12                #  #      ##
+#    A.J. Zwijnenburg                   2021-08-18           v1.18                #  #      ##
 #    Copyright (C) 2021 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
@@ -24,7 +24,10 @@
 """
 Provides a convenience interface over the flowjo workspace parser
 
-:class: Gate
+:class: AbstractGate
+A abstract gate node, for implementation see SampleGate, GroupGate, SampleStat, GroupStat
+
+:class: SampleGate
 A gate node representing the data included in the gate
 .sample     - returns the Sample object this gate belongs to
 .parent     - (if applicable) the parent gate
@@ -67,6 +70,18 @@ The data() and gate_data() always return the cells as gated on sample-specific g
 .__len__    - returns the amount of direct subgates
 .__contains__ - checks whether the specified gate exists
 .__str__    - returns a pretty print of the gate structure
+
+:class: SampleStat
+A read-only statistics node. Shows the statistics as calculated by FlowJo
+.name       - the stat's name
+.x          - the stat's dimension (if used)
+.value      - the stat's value
+
+:class: GroupStat
+A read-only statistics of a group-owned node. Shows the statistics as calculated by FlowJo
+.name       - the stat's name
+.x          - the stat's dimension (if used)
+.value      - the stat's values
 
 :class: Sample
 A class representing a single sample and all its components
@@ -166,7 +181,8 @@ from __future__ import annotations
 from typing import Dict, List, Union
 
 from ._parser_wsp import Parser as _Parser, _AbstractGating, CHANNEL_MIN, CHANNEL_MAX
-from ._parser_wsp import Cytometer as _Cytometer, Sample as _Sample, Group as _Group, Gate as _Gate
+from ._parser_wsp import Cytometer as _Cytometer, Sample as _Sample, Group as _Group
+from ._parser_wsp import AbstractGate as _AbstractGate, Gate as _Gate, NotGate as _NotGate, OrGate as _OrGate, AndGate as _AndGate, StatGate as _StatGate
 from .matrix import MTX
 from .transform import _Abstract as _AbstractTransform
 
@@ -174,35 +190,20 @@ import pandas as pd
 import numpy as np
 import os
 import copy
+import sys
 
-class Gate:
+class AbstractGate:
     """
-    Convenience wrapper around a FlowJo workspace parser gate object.
-    Wrapping this class allows for additional convenience functions and the hiding
-    of implementation details.
-        :param sample: the sample this gate belongs to
-        :param data: the parser _Gate object
+    An abstract class for gate nodes 
+        :param gate_data: the parser gate object
         :param parent: the parent gate
     """
-    def __init__(self, sample: Sample, gate_data: _Gate, parent_gate: Gate=None) -> None:
-        self._sample: Sample = sample
-        self.parent: Gate = parent_gate
-        self._gate: _Gate = gate_data
-        self._gating: _AbstractGating = self._gate._gating
+    def __init__(self, gate_data: _AbstractGate, parent: AbstractGate=None) -> None:
+        self._gate: _AbstractGate = gate_data
+        self.parent: AbstractGate = parent
+        self.name: str = self._gate.name
 
-        self.id = self._gate.id
-        self.name = self._gate.name
-        self.x = self._gate.x
-        self.y = self._gate.y
-
-        self.boolean = self._gate.boolean
-
-        self._gates: Dict[str, Gate] = {}
-        self._in_gate: pd.Series = None
-
-        for gate in self._gate.gates:
-            gate = self._gate.gates[gate]
-            self._gates[gate.name] = Gate(self._sample, gate, self)
+        self._gates: Dict[str, AbstractGate] = {}
 
         self.__iter: int = None
 
@@ -222,11 +223,181 @@ class Gate:
         return gate_path
 
     @property
+    def gates(self) -> List[str]:
+        return list(self._gates.keys())
+
+    def __len__(self) -> int:
+        """
+        Amount of subgates in this gate node
+        """
+        return len(self._gates)
+
+    def __contains__(self, gate: str) -> bool:
+        """
+        Checks if this gate contains a subgate with the specified name
+        """
+        gates = gate.split("/", 1)
+
+        gate = gates[0]
+
+        if gate not in self._gates:
+            return False
+        elif len(gates) > 1:
+            return self._gates[gate].__contains__(gates[1])
+        else:
+            return True
+
+    def __getitem__(self, gate: str) -> AbstractGate:
+        """
+        Returns the specified Gate. Accepts chained gates (gate chains separated by '/')
+            :param gate: the sample id or name
+        """
+        if not isinstance(gate, str):
+            raise KeyError(f"gate index should inherit str not '{gate.__class__.__name__}'")
+
+        gates = gate.split("/", 1)
+
+        if gates[0] == "":
+            raise KeyError(f"gate node '{gates[0]}' in '{self.path}/{gates[0]}' is empty")
+
+        try:
+            gate = self._gates[gates[0]]
+        except KeyError:
+            raise KeyError(f"gate node '{self.path}/{gates[0]}' cannot be found'") from None
+
+        if len(gates) > 1:
+            return gate[gates[1]]
+        else:
+            return gate
+
+    def __iter__(self):
+        self.__iter = 0
+        return self
+
+    def __next__(self):
+        keys = list(self._gates.keys())
+        
+        if len(keys) <= self.__iter:
+            raise StopIteration
+        
+        key = keys[self.__iter]
+        self.__iter += 1
+        
+        return self._gates[key]
+
+    def _repr_name(self, padding: int) -> str:
+        """
+        Generates a pretty representation of the current gate
+            :param padding: the value to pad space to before placing count data
+        """
+        raise NotImplementedError("Implement in child class")
+
+    def _repr_tree(self, prefix: str, padding: int) -> str:
+        """
+        Generate a pretty representation of the gate tree for __str__. 
+        Iterative as it needs to scan the entire gate structure.
+        The root gate's prefix is always default ("").
+            :param prefix: the values to be added to the beginning of the gate representation.
+            :param padding: the value to pad space to before placing count data
+        """
+        node_repr = self._repr_name(padding)
+
+        # Calculate padding
+        subnode_pad = 0
+        for gate_id in self._gates.keys():
+            if len(gate_id) > subnode_pad:
+                subnode_pad = len(gate_id)
+        subnode_pad += 2
+
+        if prefix == "":
+            for i, gate_id in enumerate(list(self._gates.keys())):
+                # The last entree needs a fancy cap
+                if len(self._gates) == i + 1:
+                    subnode_prefix = "  "
+                    subnode_repr = f" └{self._gates[gate_id]._repr_tree(subnode_prefix, subnode_pad)}"
+                else:
+                    subnode_prefix = " │"
+                    subnode_repr = f" ├{self._gates[gate_id]._repr_tree(subnode_prefix, subnode_pad)}"
+
+                node_repr += "\n" + subnode_repr
+
+        else:
+            node_repr = f"╴{node_repr}"
+
+            for i, gate_id in enumerate(list(self._gates.keys())):
+                # The last entree needs a fancy cap
+                if len(self._gates) == i + 1:
+                    subnode_prefix = f"{prefix}   "
+                    subnode_repr = f"{prefix}  └{self._gates[gate_id]._repr_tree(subnode_prefix, subnode_pad)}"
+                else:
+                    subnode_prefix = f"{prefix}  │"
+                    subnode_repr = f"{prefix}  ├{self._gates[gate_id]._repr_tree(subnode_prefix, subnode_pad)}"
+
+                node_repr += "\n" + subnode_repr
+
+        return node_repr
+
+    def __repr__(self) -> str:
+        # Append parent gates
+        if self.parent is not None:
+            output = self.parent.path + "/"
+        else:
+            output = ""
+        
+        output += self._repr_tree(prefix="", padding=len(self.name) + 2)
+        return output
+
+class SampleGate(AbstractGate):
+    """
+    A gate node representation for a gate describing a sample population
+        :param sample: the sample this gate belongs to
+        :param gate_data: the parser gate object
+        :param parent: the parent gate
+    """
+    def __init__(self, sample: Sample, gate_data: _AbstractGate, parent: AbstractGate=None) -> None:
+        super().__init__(gate_data, parent)
+        self._sample: Sample = sample
+
+        # Gate specific info
+        self._gating: _AbstractGating = None
+        self._in_gate: pd.Series = None     # Note: the _in_gate.name is undetermined and will be modified without warning
+
+        self.id = None
+        self.x = None
+        self.y = None
+       
+        if isinstance(self._gate, _Gate):
+            self._gating = self._gate._gating
+            self.id = self._gate.id
+            self.x = self._gate.x
+            self.y = self._gate.y
+
+        for gate in self._gate.gates:
+            gate = self._gate.gates[gate]
+            if isinstance(gate, _AbstractGate):
+                self._gates[gate.name] = SampleGate(self._sample, gate, self)
+            elif isinstance(gate, _StatGate):
+                stat = SampleStat(self._sample, gate, self)
+                self._gates[stat.name] = stat
+            else:
+                raise NotImplementedError(f"Unknown gate node '{gate}'. Please contact the author.")
+
+    @property
     def sample(self) -> Sample:
         """
         Returns the sample this gate belongs to
         """
         return self._sample
+
+    @property
+    def count(self) -> int:
+        """
+        Returns the amount of cells within this gate
+        """
+        if self._in_gate is None:
+            raise ValueError("Gate has not been applied to the sample data. Make sure to load_data() or apply_gates()")
+
+        return sum(self._in_gate)
 
     def data(self, translate: bool=True) -> pd.DataFrame:
         """
@@ -269,11 +440,21 @@ class Gate:
 
         remove = self.path + "/"
 
+        # Mitigation for 'PerformanceWarning: DataFrame is highly fragmented'
+        # Acquire references to the _in_gates within the gating tree, then concat
+        in_gate: List[pd.Series] = []
         for gate in self._gates:
-            self._gates[gate]._annotate_gate(data, remove)
+            gate = self._gates[gate]
+            if isinstance(gate, SampleGate):
+                gate._attach_gate(in_gate, remove)
+        # Gate data is necessary for factorization
+        data = pd.concat([data, *in_gate], axis=1)
 
         # factorize gate columns
         if factor is not None:
+            # Mitigation for 'PerformanceWarning: DataFrame is highly fragmented'
+            # First collect all new factors, then concat at once
+            new_factors: List[pd.Series] = []
             #redundant = []
             for factor_name in factor:
                 factor_levels = factor[factor_name]
@@ -287,18 +468,22 @@ class Gate:
 
                     print(f"while factorizing '{factor_name}' not all levels were found {missing_levels}")
 
-                data[factor_name] = np.nan
+                factor_slice = pd.Series(np.nan, index=data.index, name=factor_name, dtype="object")
+
                 for factor_level in factor_levels:
                     try:
-                        data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
+                        factor_slice.loc[data[factor_level]] = factor_levels[factor_level]
                     except KeyError:
                         pass
 
                     #redundant.append(factor_level)
 
+                new_factors.append(factor_slice)
+
+            data = pd.concat([data, *new_factors], axis=1)
             # Remove now redundant columns
             #data.drop(columns=redundant, inplace=True)
-
+        
         return data
 
     def has_data(self) -> bool:
@@ -308,20 +493,6 @@ class Gate:
         if self._sample._data is None:
             return False
         return True
-
-    @property
-    def gates(self) -> List[str]:
-        return list(self._gates.keys())
-
-    @property
-    def count(self) -> int:
-        """
-        Returns the amount of cells within this gate
-        """
-        if self._in_gate is None:
-            raise ValueError("Gate has not been applied to the sample data. Make sure to load_data() or apply_gates()")
-
-        return sum(self._in_gate)
 
     def transforms(self) -> Dict[str, _AbstractTransform]:
         """
@@ -356,10 +527,40 @@ class Gate:
 
         return polygon
 
+    def _attach_gate(self, in_gate: List[pd.Series], remove: str=None) -> None:
+        """
+        Adds the True/False annotation of self._in_gate to the data. Makes sure all indexes are available.
+        Recurses into the child-gates
+            :param in_gate: a list of (named) gating masks
+            :param remove: the prefixed gatenodes to remove in the output column headers
+            :returns: the data with attached gate.
+        """
+        gate = self.path.split(remove, 1)
+        if len(gate) < 2:
+            gate = gate[0]
+        else:
+            gate = gate[1]
+
+        #data[gate] = self._in_gate
+        in_gate.append(self._in_gate)
+        in_gate[-1].name = gate
+        
+        for gate in self._gates:
+            gate = self._gates[gate]
+            if isinstance(gate, SampleGate):
+                gate._attach_gate(in_gate, remove)
+
     def _apply_gates(self) -> None:
         """
         Applies the gating structure to the dataset. Build boolean masks for each gate defining which cells fall in within the gate
         """
+        # this needs to be refactored for proper handling of AND and OR Boolean gates
+        # currently it assumes only a parent is needed for containment calculation. That is not true anymore when 
+        # working with boolean AND, OR gates.
+
+        if isinstance(self._gate, _OrGate) or isinstance(self._gate, _AndGate):
+            raise NotImplementedError("Or and And Boolean gates are not yet implemented")
+
         # For the gate be to applied properly the gate might need to be transformed to the correct dimensions
         transform_x = self._sample._transforms[self.x]
         # One-dimensional plots (like histograms), do not have a y-transform
@@ -371,11 +572,8 @@ class Gate:
         in_gating = self._gating.contains(self._sample._data, transform_x, transform_y)
 
         # Apply boolean gating here
-        if self.boolean:
-            if self.boolean == "not":
-                in_gating = ~in_gating 
-            else:
-                raise NotImplementedError(f"boolean transforms of type '{self.boolean}' are not yet implemented")
+        if isinstance(self._gate, _NotGate):
+            in_gating = ~in_gating 
 
         # Append to parent gates (if available) to adhere to gate heirarchy
         if self.parent:
@@ -385,193 +583,78 @@ class Gate:
 
         # Forward signal
         for gate in self._gates:
-            self._gates[gate]._apply_gates()
+            gate = self._gates[gate]
 
-    def _annotate_gate(self, data: pd.DataFrame, remove: str=None) -> None:
+            # No need to apply gates on a stats node
+            if isinstance(gate, SampleGate):
+                gate._apply_gates()
+
+    def _repr_name(self, padding: int) -> str:
         """
-        Adds the True/False annotation of self._in_gate to the data. Makes sure all indexes are available.
-        Recurses into the child-gates
-            :param data: the dataframe to annotate
-            :param remove: the prefixed gatenodes to remove in the output column headers
-        """
-        gate = self.path.split(remove, 1)
-        if len(gate) < 2:
-            gate = gate[0]
-        else:
-            gate = gate[1]
-
-        data[gate] = self._in_gate
-        
-        for gate in self._gates:
-            self._gates[gate]._annotate_gate(data, remove)
-
-    def __len__(self) -> int:
-        """
-        Amount of subgates in this gate node
-        """
-        return len(self._gates)
-
-    def __contains__(self, gate: str) -> bool:
-        """
-        Checks if this gate contains a subgate with the specified name
-        """
-        gates = gate.split("/", 1)
-
-        gate = gates[0]
-
-        if gate not in self._gates:
-            return False
-        elif len(gates) > 1:
-            return self._gates[gate].__contains__(gates[1])
-        else:
-            return True
-
-    def __getitem__(self, gate: str) -> Gate:
-        """
-        Returns the specified Gate. Accepts chained gates (gate chains separated by '/')
-            :param gate: the sample id or name
-        """
-        if not isinstance(gate, str):
-            raise KeyError(f"gate index should inherit str not '{gate.__class__.__name__}'")
-
-        gates = gate.split("/", 1)
-
-        if gates[0] == "":
-            raise KeyError(f"gate node '{gates[0]}' in '{self.path}/{gates[0]}' is empty")
-
-        try:
-            gate = self._gates[gates[0]]
-        except KeyError:
-            raise KeyError(f"gate node '{self.path}/{gates[0]}' cannot be found'") from None
-
-        if len(gates) > 1:
-            return gate[gates[1]]
-        else:
-            return gate
-
-    def __iter__(self):
-        self.__iter = 0
-        return self
-
-    def __next__(self):
-        keys = list(self._gates.keys())
-        
-        if len(keys) <= self.__iter:
-            raise StopIteration
-        
-        key = keys[self.__iter]
-        self.__iter += 1
-        
-        return self._gates[key]
-
-    def _gate_repr(self, prefix: str, padding: int) -> str:
-        """
-        Generate a pretty representation of the gate stack for __str__. 
-        Iterative as it needs to scan the entire gate structure.
-        The root gate's prefix is always default ("").
-            :param prefix: the values to be added to the beginning of the gate representation.
+        Generates a pretty representation of the current gate
             :param padding: the value to pad space to before placing count data
         """
         if self._in_gate is None:
-            node_repr = self.name
+            node_name = self.name
         else:
             node_padding = padding - len(self.name)
-            node_repr = f"{self.name}{' '*node_padding}[{self.count}]"
+            node_name = f"{self.name}{' '*node_padding}[{self.count}]"
 
-        # Calculate padding
-        subnode_pad = 0
-        for gate_id in self._gates.keys():
-            if len(gate_id) > subnode_pad:
-                subnode_pad = len(gate_id)
-        subnode_pad += 2
+        return node_name
 
-        if prefix == "":
-            for i, gate_id in enumerate(list(self._gates.keys())):
-                # The last entree needs a fancy cap
-                if len(self._gates) == i + 1:
-                    subnode_prefix = "  "
-                    subnode_repr = f" '{self._gates[gate_id]._gate_repr(subnode_prefix, subnode_pad)}"
-                else:
-                    subnode_prefix = " |"
-                    subnode_repr = f" |{self._gates[gate_id]._gate_repr(subnode_prefix, subnode_pad)}"
-
-                node_repr += "\n" + subnode_repr
-
-        else:
-            node_repr = f"-{node_repr}"
-
-            for i, gate_id in enumerate(list(self._gates.keys())):
-                # The last entree needs a fancy cap
-                if len(self._gates) == i + 1:
-                    subnode_prefix = f"{prefix}   "
-                    subnode_repr = f"{prefix}  '{self._gates[gate_id]._gate_repr(subnode_prefix, subnode_pad)}"
-                else:
-                    subnode_prefix = f"{prefix}  |"
-                    subnode_repr = f"{prefix}  |{self._gates[gate_id]._gate_repr(subnode_prefix, subnode_pad)}"
-
-                node_repr += "\n" + subnode_repr
-
-        return node_repr
-
-    def __repr__(self) -> str:
-        # Append parent gates
-        if self.parent is not None:
-            output = self.parent.path + "/"
-        else:
-            output = ""
-        
-        output += self._gate_repr(prefix="", padding=len(self.name) + 2)
-        return output
-
-class GroupGate:
+class GroupGate(AbstractGate):
     """
-    Provides an interface for group-based gates that are applied to one or multiple samples
+    A gate node representation for a gate describing a group population
         :param group: the group this gate belongs to
-        :param data: the parser _Gate object
+        :param gate_data: the parser gate object
         :param parent: the parent gate
     """
-    def __init__(self, group: Group, gate_data: _Gate, parent_gate: GroupGate=None) -> None:
+    def __init__(self, group: Group, gate_data: _AbstractGate, parent: AbstractGate=None) -> None:
+        super().__init__(gate_data, parent)
         self._group: Group = group
-        self.parent: Gate = parent_gate
-        self._gate: _Gate = gate_data
-        self._gating: _AbstractGating = self._gate._gating
 
-        self.id = self._gate.id
-        self.name = self._gate.name
-        self.x = self._gate.x
-        self.y = self._gate.y
+        # Gate specific info
+        self._gating: _AbstractGating = None
+        self._in_gate: pd.Series = None
 
-        self.boolean = self._gate.boolean
-
-        self._gates: Dict[str, Gate] = {}
+        self.id = None
+        self.x = None
+        self.y = None
+       
+        if isinstance(self._gate, _Gate):
+            self._gating = self._gate._gating
+            self.id = self._gate.id
+            self.x = self._gate.x
+            self.y = self._gate.y
 
         for gate in self._gate.gates:
             gate = self._gate.gates[gate]
-            self._gates[gate.name] = GroupGate(self._group, gate, self)
-
-        self.__iter: int = None
+            if isinstance(gate, _AbstractGate):
+                self._gates[gate.name] = GroupGate(self._group, gate, self)
+            elif isinstance(gate, _StatGate):
+                stat = GroupStat(self._group, gate, self)
+                self._gates[stat.name] = stat
+            else:
+                raise NotImplementedError(f"Unknown gate node '{gate}'. Please contact the author.")
 
     @property
     def group(self) -> Group:
         """
-        Returns the group this groupgate belongs to
+        Returns the group this stat belongs to
         """
         return self._group
 
     @property
-    def path(self) -> str:
+    def count(self) -> int:
         """
-        Returns the full gating path ('/' separated gate structure)
+        Returns the total amount of cells within this gate. Sums the count of all samples
         """
-        gate_path = self.name
-        parent = self.parent
-        while True:
-            if parent is None:
-                break
-            gate_path = f"{parent.name}/{gate_path}"
-            parent = parent.parent
+        counts = 0
 
-        return gate_path
+        for sample in self._group:
+            counts += sample.gates[self.path].count
+
+        return counts
 
     def data(self, translate: bool=True) -> pd.DataFrame:
         """
@@ -614,18 +697,6 @@ class GroupGate:
 
         return data
 
-    @property
-    def count(self) -> int:
-        """
-        Returns the total amount of cells within this gate. Sums the count of all samples
-        """
-        counts = 0
-
-        for sample in self._group:
-            counts += sample.gates[self.path].count
-
-        return counts
-
     def transforms(self) -> Dict[str, _AbstractTransform]:
         """
         Returns the sample's parameter transforms. Returns a shallow copy.
@@ -661,128 +732,138 @@ class GroupGate:
         polygon.columns = column_names
 
         return polygon
-        
-    def __len__(self) -> int:
+
+    def _repr_name(self, padding: int) -> str:
         """
-        Amount of subgates in this gate node
-        """
-        return len(self._gates)
-
-    def __contains__(self, gate: str) -> bool:
-        """
-        Checks if this gate contains a subgate with the specified name
-        """
-        gates = gate.split("/", 1)
-
-        gate = gates[0]
-
-        if gate not in self._gates:
-            return False
-        elif len(gates) > 1:
-            return self._gates[gate].__contains__(gates[1])
-        else:
-            return True
-
-    def __getitem__(self, gate: str) -> Gate:
-        """
-        Returns the specified Gate. Accepts chained gates (gate chains separated by '/')
-            :param gate: the sample id or name
-        """
-        if not isinstance(gate, str):
-            raise KeyError(f"gate index should inherit str not '{gate.__class__.__name__}'")
-
-        gates = gate.split("/", 1)
-
-        if gates[0] == "":
-            raise KeyError(f"gate node '{gates[0]}' in '{self.path}/{gates[0]}' is empty")
-
-        try:
-            gate = self._gates[gates[0]]
-        except KeyError:
-            raise KeyError(f"gate node '{self.path}/{gates[0]}' cannot be found'") from None
-
-        if len(gates) > 1:
-            return gate[gates[1]]
-        else:
-            return gate
-
-    def __iter__(self):
-        self.__iter = 0
-        return self
-
-    def __next__(self):
-        keys = list(self._gates.keys())
-        
-        if len(keys) <= self.__iter:
-            raise StopIteration
-        
-        key = keys[self.__iter]
-        self.__iter += 1
-        
-        return self._gates[key]
-
-    def _gate_repr(self, prefix: str, padding: int) -> str:
-        """
-        Generate a pretty representation of the gate stack for __str__. 
-        Iterative as it needs to scan the entire gate structure.
-        The root gate's prefix is always default ("").
-            :param prefix: the values to be added to the beginning of the gate representation.
+        Generates a pretty representation of the current gate
             :param padding: the value to pad space to before placing count data
         """
-        #if self._in_gate is None:
-        #    node_repr = self.name
-        #else:
         node_padding = padding - len(self.name)
-        try:
-            node_repr = f"{self.name}{' '*node_padding}[{self.count}]"
-        except ValueError:
-            # self.count an fire an error if the sample data hasn't been loaded
-            node_repr = f"{self.name}{' '*node_padding}[no data]"
+        node_name = f"{self.name}{' '*node_padding}[{self.count}]"
 
-        # Calculate padding
-        subnode_pad = 0
-        for gate_id in self._gates.keys():
-            if len(gate_id) > subnode_pad:
-                subnode_pad = len(gate_id)
-        subnode_pad += 2
+        return node_name
 
-        if prefix == "":
-            for i, gate_id in enumerate(list(self._gates.keys())):
-                # The last entree needs a fancy cap
-                if len(self._gates) == i + 1:
-                    subnode_prefix = "  "
-                    subnode_repr = f" '{self._gates[gate_id]._gate_repr(subnode_prefix, subnode_pad)}"
-                else:
-                    subnode_prefix = " |"
-                    subnode_repr = f" |{self._gates[gate_id]._gate_repr(subnode_prefix, subnode_pad)}"
-
-                node_repr += "\n" + subnode_repr
-
+class SampleStat(AbstractGate):
+    """
+    Convenience wrapper around a sample statistics gate node
+    This is a pure read-only class. Most calculations cannot be redone due to requiring scale data (which is currently not implemented). 
+        :param sample: the sample this gate belongs to
+        :param stat_data: the parser _Gate object
+        :param parent: the parent gate
+    """
+    def __init__(self, sample: Sample, stat_data: _StatGate, parent: AbstractGate=None) -> None:
+        super().__init__(stat_data, parent)
+        self._sample: Sample = sample
+        self._stat: _StatGate = stat_data
+        self.x: str = self._stat.id
+        self.value: float = self._stat.value
+        
+        if self._stat.name == "Count":
+            self.name = "Count"
+        elif self._stat.name in ["CV", "Geometric Mean", "Mean", "Median", "Median Abs Dev", "Mode", "Robust CV", "Robust SD", "SD"]:
+            try:
+                label = self._sample._parameter_names[self.x]
+            except KeyError:
+                label = self.x
+            self.name = f"{self._stat.name}({label})"
+        elif self._stat.name == "Percentile":
+            try:
+                label = self._sample._parameter_names[self.x]
+            except KeyError:
+                label = self.x
+            self.name = f"{self._stat.name}({self._stat.percent:.1f})({label})"
+        elif self._stat.name == "fj.stat.freqofgrandparent":
+            self.name = f"Freq of Grandparent"
+        elif self._stat.name == "fj.stat.freqofparent":
+            self.name = f"Freq of Parent"
+        elif self._stat.name == "fj.stat.freqoftotal":
+            self.name = f"Freq of Total"
+        elif self._stat.name == "fj.stat.freqof":
+            self.name = f"Freq of {self._stat.ancestor}"
         else:
-            node_repr = f"-{node_repr}"
+            raise ValueError(f"unknown stat {self._stat.name}")
 
-            for i, gate_id in enumerate(list(self._gates.keys())):
-                # The last entree needs a fancy cap
-                if len(self._gates) == i + 1:
-                    subnode_prefix = f"{prefix}   "
-                    subnode_repr = f"{prefix}  '{self._gates[gate_id]._gate_repr(subnode_prefix, subnode_pad)}"
-                else:
-                    subnode_prefix = f"{prefix}  |"
-                    subnode_repr = f"{prefix}  |{self._gates[gate_id]._gate_repr(subnode_prefix, subnode_pad)}"
+    @property
+    def sample(self) -> Sample:
+        """
+        Returns the sample this gate belongs to
+        """
+        return self._sample
 
-                node_repr += "\n" + subnode_repr
+    def _repr_name(self, padding: int) -> str:
+        """
+        Generates a pretty representation of the current gate
+            :param padding: the value to pad space to before placing count data
+        """
+        node_padding = padding - len(self.name)
+        node_repr = f"{self.name}{' '*node_padding}[{self.value:.3f}]"
 
         return node_repr
 
-    def __repr__(self) -> str:
-        # Append parent gates
-        if self.parent is not None:
-            output = self.parent.path + "/"
-        else:
-            output = ""
+class GroupStat(AbstractGate):
+    """
+    Convenience wrapper around a sample statistics gate node
+    This is a pure read-only class. Most calculations cannot be redone due to requiring scale data (which is currently not implemented). 
+        :param sample: the sample this gate belongs to
+        :param stat_data: the parser _Gate object
+        :param parent: the parent gate
+    """
+    def __init__(self, group: Group, stat_data: _StatGate, parent: AbstractGate=None) -> None:
+        super().__init__(stat_data, parent)
+        self._group: Group = group
+        self._stat: _StatGate = stat_data
+        self.x: str = self._stat.id
         
-        output += self._gate_repr(prefix="", padding=len(self.name) + 2)
-        return output
+        if self._stat.name == "Count":
+            self.name = "Count"
+        elif self._stat.name in ["CV", "Geometric Mean", "Mean", "Median", "Median Abs Dev", "Mode", "Robust CV", "Robust SD", "SD"]:
+            try:
+                label = self._group._parameter_names[self.x]
+            except KeyError:
+                label = self.x
+            self.name = f"{self._stat.name}({label})"
+        elif self._stat.name == "Percentile":
+            try:
+                label = self._group._parameter_names[self.x]
+            except KeyError:
+                label = self.x
+            self.name = f"{self._stat.name}({self._stat.percent:.1f})({label})"
+        elif self._stat.name == "fj.stat.freqofgrandparent":
+            self.name = f"Freq of Grandparent"
+        elif self._stat.name == "fj.stat.freqofparent":
+            self.name = f"Freq of Parent"
+        elif self._stat.name == "fj.stat.freqoftotal":
+            self.name = f"Freq of Total"
+        elif self._stat.name == "fj.stat.freqof":
+            self.name = f"Freq of {self._stat.ancestor}"
+        else:
+            raise ValueError(f"unknown stat {self._stat.name}")
+
+    @property
+    def group(self) -> Group:
+        """
+        Returns the group this stat belongs to
+        """
+        return self._group
+
+    @property
+    def value(self) -> pd.Series:
+        """
+        Returns a series of the stat values index on the sample name within the group
+        """
+        index = [x.name for x in self._group.samples]
+        value = [x.gates[self.path].value for x in self._group.samples]
+        return pd.Series(value, index=index)
+
+    def _repr_name(self, padding: int) -> str:
+        """
+        Generates a pretty representation of the current gate
+            :param padding: the value to pad space to before placing count data
+        """
+        node_padding = padding - len(self.name)
+        node_repr = f"{self.name}{' '*node_padding}[{self.value:.3f}]"
+
+        return node_repr
 
 class Sample:
     """
@@ -808,16 +889,18 @@ class Sample:
         self._data: pd.DataFrame = None
 
         self.cytometer: Cytometer = None
-        cytometer_id = self.keywords["$CYT"]
-        for cytometer in self._parser.cytometers:
-            if cytometer.cyt == cytometer_id:
-                self.cytometer = Cytometer(self._parser, cytometer)
-                break
+        try:
+            cytometer_id = self.keywords["$CYT"]
+        except KeyError:
+            pass
+        else:
+            for cytometer in self._parser.cytometers:
+                if cytometer.cyt == cytometer_id:
+                    self.cytometer = Cytometer(self._parser, cytometer)
+                    break
         
         self.compensation: MTX = self._sample.compensation
         self._transforms: Dict[str, _AbstractTransform] = self._sample.transforms
-        
-        self._gates: _Gates = _Gates(self)
 
         self._parameter_names: Dict[str, str] = {}
         # Cannot use $PAR for iteration as Compensation adds additional $P entrees
@@ -835,6 +918,9 @@ class Sample:
                 param_name = ""
             
             self._parameter_names[param_id] = param_name
+
+        # Parameter names must be known for some of the gate node statistics
+        self._gates: _Gates = _Gates(self)
 
     @property
     def keywords(self) -> Dict[str, str]:
@@ -872,7 +958,7 @@ class Sample:
             self.is_compensated = False
 
         # os.path.join fixes between OS path differences
-        self._data = pd.read_csv(os.path.join(path), encoding="utf-8", error_bad_lines=True)
+        self._data = pd.read_csv(os.path.join(path), encoding="utf-8", on_bad_lines="error")
         self.path_data = path
 
         # Any gating expect compensated data, so apply compensation
@@ -968,10 +1054,19 @@ class Sample:
         if start_node is None:
             # Sample need to handle the data
             data = self.data(translate=translate)
-            self.gates._annotate_gate(data)
+
+            # Mitigation for 'PerformanceWarning: DataFrame is highly fragmented'
+            # Acquire references to the _in_gates within the gating tree then concat
+            in_gate: List[pd.Series] = []
+            self.gates._attach_gate(in_gate)
+            data = pd.concat([data, *in_gate], axis=1)
 
             # factorize gate columns
             if factor is not None:
+                # Mitigation for 'PerformanceWarning: DataFrame is highly fragmented'
+                # First collect all new factors, then concat at once
+                new_factors: List[pd.Series] = []
+
                 for factor_name in factor:
                     factor_levels = factor[factor_name]
                     
@@ -984,12 +1079,17 @@ class Sample:
 
                         print(f"while factorizing '{factor_name}' not all levels were found {missing_levels}")
 
-                    data[factor_name] = np.nan
+                    factor_slice = pd.Series(np.nan, index=data.index, name=factor_name, dtype="object")
+
                     for factor_level in factor_levels:
                         try:
-                            data.loc[data[factor_level], factor_name] = factor_levels[factor_level]
+                            factor_slice.loc[data[factor_level]] = factor_levels[factor_level]
                         except KeyError:
                             pass
+                    
+                    new_factors.append(factor_slice)
+                
+                data = pd.concat([data, *new_factors], axis=1)
 
         else:
             # Return from a gate node -> gate node takes care of data handling
@@ -1119,21 +1219,33 @@ class _Gates:
     def __init__(self, parent: Union[Sample, Group]) -> None:
         self._sample: Union[Sample, Group] = parent
 
-        self._gates: Dict[str, Union[Gate, GroupGate]] = {}
+        self._gates: Dict[str, Union[SampleGate, GroupGate]] = {}
 
         if isinstance(self._sample, Group):
             # Check if this group is based on a parsed group
             if self._sample._group is not None:
                 for gate in self._sample._group.gates:
                     gate = self._sample._group.gates[gate]
-                    self._gates[gate.name] = GroupGate(self._sample, gate, None)
+                    if isinstance(gate, _AbstractGate):
+                        self._gates[gate.name] = GroupGate(self._sample, gate, None)
+                    elif isinstance(gate, _StatGate):
+                        stat = GroupStat(self._sample, gate, None)
+                        self._gates[stat.name] = stat
+                    else:
+                        raise NotImplementedError(f"Unknown groupgate node '{gate}'. Please contact the author.")
             else:
                 pass
 
         elif isinstance(self._sample, Sample):
             for gate in self._sample._sample.gates:
                 gate = self._sample._sample.gates[gate]
-                self._gates[gate.name] = Gate(self._sample, gate, None)
+                if isinstance(gate, _AbstractGate):
+                    self._gates[gate.name] = SampleGate(self._sample, gate, None)
+                elif isinstance(gate, _StatGate):
+                    stat = SampleStat(self._sample, gate, None)
+                    self._gates[stat.name] = stat
+                else:
+                    raise NotImplementedError(f"Unknown gate node '{gate}'. Please contact the author.")
 
         else:
             raise NotImplementedError("unknown gate parent class")
@@ -1149,16 +1261,18 @@ class _Gates:
         Applies the gating structure to the dataset. Build boolean masks for each gate defining which cells fall in within the gate
         """
         for gate in self._gates:
-            self._gates[gate]._apply_gates()
+            gate = self._gates[gate]
+            if isinstance(gate, SampleGate):
+                gate._apply_gates()
 
-    def _annotate_gate(self, data: pd.DataFrame) -> pd.DataFrame:
+    def _attach_gate(self, in_gate: List[pd.Series]) -> None:
         """
         Adds the True/False annotation of self._in_gate to the data. Makes sure all indexes are available.
         Recurses into the child-gates
-            :param data: the dataframe to annotate
-        """      
+            :param data: a list of boolean gating masks
+        """
         for gate in self._gates:
-            self._gates[gate]._annotate_gate(data, remove=None)
+            self._gates[gate]._attach_gate(in_gate, remove=None)
 
     def __len__(self) -> int:
         """
@@ -1166,7 +1280,7 @@ class _Gates:
         """
         return len(self._gates)
 
-    def __getitem__(self, gate: str) -> Gate:
+    def __getitem__(self, gate: str) -> AbstractGate:
         """
         Returns the specified Gate. Accepts chained gates (gate chains separated by '/')
             :param gate: the sample id or name
@@ -1182,7 +1296,7 @@ class _Gates:
         try:
             gate = self._gates[gates[0]]
         except KeyError:
-            raise KeyError(f"gate node '{gates[0]}' cannot be found'") from None
+            raise KeyError(f"gate node '{gates[0]}' cannot be found") from None
 
         if len(gates) > 1:
             return gate[gates[1]]
@@ -1230,7 +1344,7 @@ class _Gates:
         subnode_pad += 2
 
         for gate in self._gates:
-            output.append(self._gates[gate]._gate_repr(prefix="", padding=subnode_pad))
+            output.append(self._gates[gate]._repr_tree(prefix="", padding=subnode_pad))
 
         return "\n".join(output)
 
@@ -1247,7 +1361,7 @@ class Group:
         self._group: _Group = group_data
 
         self.name: str = None                   # group name
-        self._gates: _Gates = _Gates(self)      # group gates hook
+        self._gates: _Gates = None              # group gates hook
 
         self._data: Dict[str, Sample] = {}      # sample data
         self._names: List[str] = []             # sample names
@@ -1262,7 +1376,7 @@ class Group:
         Instantiates a Group from a workspace parser
             :param parser: the workspace parser to link identifiers to sample data
             :param group_data: the parser _Group object
-            :param samples: a list of Sample's to add to the group
+            :param samples: sample data hook
         """
         cls = cls(parser, group_data)
         cls.name = cls._group.name
@@ -1275,6 +1389,10 @@ class Group:
 
         if cls.name != "All Samples":
             cls._check_transform()
+
+        # Gates must be parsed after name lookup for proper parsing of Stat nodes
+        cls._name_lookup()
+        cls._gates = _Gates(cls)
 
         return cls
 
@@ -1296,6 +1414,10 @@ class Group:
             cls._names.append(cls._data[sample_id].name)
 
         cls._check_transform()
+
+        # Gates must be parsed after name lookup for proper parsing of Stat nodes
+        cls._name_lookup()
+        cls._gates = _Gates(cls)
 
         return cls
 
@@ -1336,7 +1458,11 @@ class Group:
         """
         data: List[pd.DataFrame] = []
         for sample in self._data:
-            data.append(self._data[sample].data(start_node, translate=False))
+            try:
+                data.append(self._data[sample].data(start_node, translate=False))
+            except KeyError as error:
+                error_message = error.__str__().strip('"')
+                raise KeyError(f"in sample '{self._data[sample].name}' {error_message}").with_traceback(sys.exc_info()[2]) from None
 
         data = pd.concat(data, ignore_index=True)
 
@@ -1355,8 +1481,12 @@ class Group:
         """
         data: List[pd.DataFrame] = []
         for sample in self._data:
-            data.append(self._data[sample].gate_data(start_node, factor=factor, translate=False))
-        
+            try:
+                data.append(self._data[sample].gate_data(start_node, factor=factor, translate=False))
+            except KeyError as error:
+                error_message = error.__str__().strip('"')
+                raise KeyError(f"in sample '{self._data[sample].name}' {error_message}").with_traceback(sys.exc_info()[2]) from None
+
         data = pd.concat(data, ignore_index=True)
 
         if translate:
@@ -1463,14 +1593,19 @@ class Group:
         """
         Resolves column naming conflicts by generating a lookup table.
         Everytime a new sample is added to the group this will have to be regenerated.
-            :warnings: whether to print warnings or not
             :returns: a Dict[column name : name]
         """
         if self._parameter_names is None:
             names = []
             for sample in self._data:
                 names.append(pd.DataFrame(self._data[sample]._parameter_names, index=[sample]))
-            names = pd.concat(names)
+
+            # Escape is no samples in the group
+            if not names:
+                self._parameter_names = {}
+                return
+
+            names: pd.DataFrame = pd.concat(names)
 
             name_dict = {}
             warnings = []
@@ -1482,7 +1617,7 @@ class Group:
                 elif len(unique_names) == 1:
                     name_dict[column] = unique_names[0]
                 else:
-                    warnings.append(f"column '{column}' has multiple [{', '.join(unique_names)}] names. '{unique_names[0]}' is used to name the '{column}' parameter")
+                    warnings.append(f"In group '{self.name}' column '{column}' has multiple [{', '.join(unique_names)}] names. '{unique_names[0]}' is used to name the '{column}' parameter")
                     name_dict[column] = unique_names[0]
 
             if warnings:
@@ -1618,9 +1753,11 @@ class Group:
         for sample_id in self.ids:
             sample_name = self[sample_id].name
             try:
-                self[sample_id].load_data(csv_files[sample_name], format, compensated)
+                csv_path = csv_files[sample_name]
             except KeyError:
                 warnings.append(f"no data file found for sample '{sample_name}'")
+            else:
+                self[sample_id].load_data(csv_path, format, compensated)
         
         if warnings:
             print("\n".join(warnings))

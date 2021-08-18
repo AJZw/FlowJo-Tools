@@ -42,3 +42,5 @@ examples/
 /*.py
 to_html/
 seq/
+tests/
+cytof/

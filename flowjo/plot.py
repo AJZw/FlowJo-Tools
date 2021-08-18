@@ -41,6 +41,7 @@ import pandas as pd
 import numpy as np
 import plotnine as p9
 import scipy
+import matplotlib
 import matplotlib.pyplot as plt
 import os
 import io
@@ -51,7 +52,7 @@ p9.options.figure_size=(7.0, 7.0)
 #p9.options.figure_size=(3.5, 3.5)
 
 ## Static functions
-def save_raster(plot:p9.ggplot, name:str, path:str="") -> None:
+def save_raster(plot: Union[p9.ggplot, matplotlib.figure.Figure], name:str, path:str="") -> None:
     if path and not os.path.isdir(path):
         raise ValueError(f"path '{path}' doesnt point to existing directory")
 
@@ -61,7 +62,12 @@ def save_raster(plot:p9.ggplot, name:str, path:str="") -> None:
     # Temporarily turn off plot view
     plt.ioff()
     
-    p9.ggsave(plot, os.path.join(path, f"{name}.png"), dpi=600)
+    if isinstance(plot, p9.ggplot):
+        p9.ggsave(plot, os.path.join(path, f"{name}.png"), dpi=600)
+    elif isinstance(plot, matplotlib.figure.Figure):
+        plot.savefig(os.path.join(path, f"{name}.png"), dpi=600)
+    else:
+        raise ValueError(f"unsupported class '{plot.__class__.__name__}'")
 
     # Close all in the background drawn plots and renable plotview
     plt.close("all")
@@ -69,7 +75,7 @@ def save_raster(plot:p9.ggplot, name:str, path:str="") -> None:
 
     p9.options.figure_size=temp
 
-def save_vector(plot:p9.ggplot, name:str, path:str="") -> None:
+def save_vector(plot: Union[p9.ggplot, matplotlib.figure.Figure], name:str, path:str="") -> None:
     if path and not os.path.isdir(path):
         raise ValueError(f"path '{path}' doesnt point to existing directory")
 
@@ -78,56 +84,20 @@ def save_vector(plot:p9.ggplot, name:str, path:str="") -> None:
 
     # Temporarily turn off plot view
     plt.ioff()
-    
-    p9.ggsave(plot, os.path.join(path, f"{name}.svg"), dpi=300)
+
+    if isinstance(plot, p9.ggplot):
+        p9.ggsave(plot, os.path.join(path, f"{name}.svg"), dpi=300)
+    elif isinstance(plot, matplotlib.figure.Figure):
+        plot.savefig(os.path.join(path, f"{name}.svg"), dpi=600)
+    else:
+        raise ValueError(f"unsupported class '{plot.__class__.__name__}'")
+
 
     # Close all in the background drawn plots and renable plotview
     plt.close("all")
     plt.show()
 
     p9.options.figure_size=temp
-
-def _plotnine_grid(plots: List[p9.ggplot], rows: int=1, cols: int=None) -> p9.ggplot:
-    """
-    Create a single image of a grid of plotnine plots. This is a hack due to the limited matplotlib backend.
-    Might not work when the figures have legends...
-        :param plots: a list of plotnine plots
-        :param rows: (if specified) the amount of rows to generate
-        :param cols: (if specified) the amount of cols to generate
-
-    Note: see https://github.com/has2k1/plotnine/issues/373
-    """
-    raise NotImplementedError("couldnt get it to work")
-
-    from matplotlib import gridspec
-
-    if rows is None and cols is None:
-        raise ValueError("please specify either rows or cols")
-    elif rows is None:
-        rows = int((len(plots) / cols)+1)
-    elif cols is None:
-        cols = int((len(plots) / rows)+1)
-
-    # empty figure to place subplots on
-    fig = (p9.ggplot()+p9.geom_blank(data=plots[0].data)+p9.theme_void()).draw()
-
-    # Create gridspec for adding subpanels to the blank figure
-    gs = gridspec.GridSpec(rows, cols)
-    axes = []
-    for i in range(0, len(plots)):
-        i_row=int(i/cols)
-        i_col=i%cols
-        print(f"{i_row}:{i_col}")
-        axes.append(fig.add_subplot(gs[i_row, i_col]))
-
-    # Add subplots to the figure
-    for i, fig in enumerate(plots):
-        # remove legends to make this work
-        fig = fig + p9.theme(legend_position="none")
-        fig._themeable={}
-        _ = fig._draw_using_figure(fig, [axes[i]])
-
-    return fig
 
 def add_polygon(plot: p9.ggplot, gate: pd.DataFrame) -> p9.ggplot:
     """
@@ -219,6 +189,7 @@ class Plotter():
     """
     tab10 = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
     tab20 = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#98df8a",  "#ff9896", "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"]
+    dark2 = ["#1b9e77", "#d95f22", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666"]
 
     def __init__(self, data: Union[pd.DataFrame, _Abstract]):
         self.name: str=None
@@ -418,7 +389,8 @@ class Plotter():
             panel_grid_major_y=p9.element_blank(),
             panel_grid_minor_x=p9.element_blank(),
             panel_grid_minor_y=p9.element_blank(),
-            panel_background=p9.element_rect(fill="#f8f8f8ff", color="#eeeeeeff"),
+            #panel_background=p9.element_rect(fill="#f8f8f8ff", color="#eeeeeeff"),
+            panel_background=p9.element_rect(fill="#f8f8f8ff", color="#ffffffff"),
             panel_border=p9.element_rect(fill=None, color="#000000ff", size=1.5),
             legend_title=p9.element_text(ha="left"),
             legend_key=p9.element_blank(),
@@ -911,8 +883,8 @@ class Plotter():
         )
 
         # The kernel 2dimensional density statistics effectively calculate density probabilities
-        # The othermost probability, generally falls outside the viewport. Sometimes it is partially
-        # within the viewport though. This shows up as a partially filled 'artefactly' line. 
+        # The outhermost probability, generally falls outside the viewport. Sometimes it is partially
+        # within the viewport though. This shows up as a partially filled 'artefactly' circle. 
         # One can just hide it with the alpha channel but we should put this past the boss
 
         # Set alpha scale range to (0.0, 1.0) to effectively hide this
@@ -981,6 +953,8 @@ class Plotter():
                             alpha="..level.."
                         ),
                         fill=c_map[factor],
+                        color=c_map[factor],
+                        size=0.1,
                         inherit_aes=False,
                         geom="polygon",
                         n=64,
@@ -990,7 +964,7 @@ class Plotter():
                     )
 
         plot += p9.scales.scale_alpha_continuous(
-            range=(0.1,1),
+            range=(0.1,1),   #doesnt work?
             expand=(0,0),
             guide=False
         )
@@ -1303,22 +1277,23 @@ class Plotter():
 
         return plots
 
-    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, min_events: int=4) -> p9.ggplot:
+    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, min_events: int=4, min_repeats: int=2) -> p9.ggplot:
         """
         Plots a correlation line graph of x versus y. If group is defined, will make a line per level in group
             :param x: the x dimension
             :param y: the y dimension
             :param c: (optional) which groups to split the data into, and plot separately
-            :param y_stat: the condensor the apply to the y dimension, choose from ["lowess", "max", "min", "sum", "mean", "median", "mode", "var", "std"]
+            :param y_stat: the condensor the apply to the y dimension, choose from ["max", "min", "sum", "mean", "median", "mode", "var", "std"]
             :param summarize: whether to summarize the data into a mean with standard deviations
             :param bins: the number of bins in the x dimension
             :param min_events: the minimum amount of events in a bin
+            :param min_repeats: the minimum amount of repeats in a summarized bin
 
         Note: the statistics are calculated on the transformed (=channel) data.
         """
         self._plot_check(self.data, x, y, color=c, fill=None)
 
-        if y_stat not in ["lowess", "max", "min", "sum", "mean", "median", "mode", "var", "std"]:
+        if y_stat not in ["max", "min", "sum", "mean", "median", "mode", "var", "std"]:
             raise ValueError(f"correlation plotting has no implementation for y_stat '{y_stat}'")
 
         if min_events < 1:
@@ -1342,6 +1317,7 @@ class Plotter():
             trans_x = self.transforms[x]
         except KeyError:
             raise KeyError(f"no transform available for '{x}', unknown local limits") from None
+
         bins_x = np.linspace(trans_x.l_start, trans_x.l_end, num=bins+1, endpoint=True)
         bins_x = list(bins_x)
     
@@ -1399,9 +1375,6 @@ class Plotter():
         elif y_stat == "std":
             y_name = f"__std({y})"
             data_stat = data_indexed.std()
-        elif y_stat == "lowess":
-            y_name = f"__lowess({y})"
-            raise NotImplementedError("lowess smoothing yet to be implemented")
         else:
             raise ValueError(f"'{y_stat}' y_stat is an unknown operation")
 
@@ -1429,6 +1402,7 @@ class Plotter():
             # Calculate mean and standard-deviation
             data_indexed = data_stat.groupby(by="__x_bin", axis=0, sort=False)
 
+            data_repeat = data_indexed.count()
             data_sum = data_indexed.mean()
             data_sum.columns = ["__mean"]
             data_sum["__std"] = data_indexed.std()
@@ -1437,8 +1411,13 @@ class Plotter():
             data_sum.sort_index(inplace=True)
             data_sum["__x_bin"] = data_sum.index
 
+            # filter for minimum amount of repeats
+            data_sum = data_sum.loc[data_repeat.iloc[:,0] >= min_repeats]
+
             # statistics
-            r_value, p_value = scipy.stats.pearsonr(data_sum["__x_bin"], data_sum["__mean"])
+            # take statistic before summarisation to have a more relevant R value
+            #r_value, p_value = scipy.stats.pearsonr(data_sum["__x_bin"], data_sum["__mean"])
+            r_value, p_value = scipy.stats.pearsonr(data_stat["__x_bin"], data_stat[y_name])
             title += f": r={r_value:.3f}, p={p_value:.4f}"
 
             # Add plotting parameters
@@ -1521,6 +1500,173 @@ class Plotter():
                 plot += p9.geom_path(
                     data=data_stat,
                     mapping=p9.aes(x="__x_bin", y=y_name),
+                    inherit_aes=False
+                )
+
+        return plot
+
+    def lowess(self, x: str, y: str, c: str="__sample", summarize: bool=False, fraction: float=0.10) -> p9.ggplot:
+        """
+        Plots a lowess smoothed correlation line graph of x versus y. If group is defined, will make a line per level in group
+            :param x: the x dimension
+            :param y: the y dimension
+            :param c: (optional) which groups to split the data into, and plot separately
+            :param summarize: whether to summarize the data into a mean with standard deviations
+            :param fraction: the fraction of the data to use for per point during lowess smoothing
+
+        Note: the statistics are calculated on the transformed (=channel) data.
+        """
+        self._plot_check(self.data, x, y, color=c, fill=None)
+
+        if summarize and c is None:
+            raise ValueError("cannot summarize if the data is not grouped")
+
+        # Get source data of unique params
+        params = pd.array([x, y, c]).dropna().unique()
+        data = self.data[params].copy()
+
+        # mask the data
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
+        
+        data = data[[x, y, c]]
+        data_indexed = data.groupby(by=[c], axis=0, sort=False, dropna=True)
+
+        # calculate stats
+        data_dict = {i_c:i_data for i_c, i_data in data_indexed}
+        data_lowess = {}
+        for i_c in data_dict:
+            i_data = data_dict[i_c]
+            data_lowess[i_c] = Plotter._lowess(
+                i_data,
+                x=x,
+                y=y,
+                fraction=fraction,
+                it=10,
+                delta=None
+            )
+            data_lowess[i_c][c] = i_c
+
+        data_lowess = pd.concat([data_lowess[x] for x in data_lowess])
+
+        #########
+        # build title
+        if self.name:
+            title = f"{self.name}: lowess({x}, {y})"
+        else:
+            title = f"lowess({x}, {y})"
+
+        # Build the plot
+        plot = self._plot_base(data_lowess, x, y, c)
+        plot = self._plot_theme(plot)
+        plot = self._plot_labels(plot, title=title, x=x, y=y)
+        plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
+
+        if summarize:
+            raise NotImplementedError("summarization for lowess smoothing not yet implemented")
+            # Calculate mean and standard-deviation
+            data_indexed = data_lowess.groupby(by="__x_bin", axis=0, sort=False)
+
+            data_repeat = data_indexed.count()
+            data_sum = data_indexed.mean()
+            data_sum.columns = ["__mean"]
+            data_sum["__std"] = data_indexed.std()
+            # remove NaNs (std of 1 value will return NaN)
+            data_sum["__std"][pd.isnull(data_sum["__std"])] = 0.0
+            data_sum.sort_index(inplace=True)
+            data_sum["__x_bin"] = data_sum.index
+
+            # filter for minimum amount of repeats
+            data_sum = data_sum.loc[data_repeat.iloc[:,0] >= min_repeats]
+
+            # statistics
+            # take statistic before summarisation to have a more relevant R value
+            #r_value, p_value = scipy.stats.pearsonr(data_sum["__x_bin"], data_sum["__mean"])
+            r_value, p_value = scipy.stats.pearsonr(data_stat["__x_bin"], data_stat[y_name])
+            title += f": r={r_value:.3f}, p={p_value:.4f}"
+
+            # Add plotting parameters
+            data_sum["__+std"] = data_sum["__mean"] + data_sum["__std"]
+            data_sum["__-std"] = data_sum["__mean"] - data_sum["__std"]
+
+            # Transform data into expected format for plotting. 
+            data_group = {}
+            data_group["mean"] = data_sum[["__x_bin", "__mean"]].copy()
+            data_group["mean"].columns = ["__x_bin", y_name]
+            data_group["mean"]["__stat"] = "mean"
+            data_group["mean"].reset_index(drop=True, inplace=True)
+    
+            data_group["+std"] = data_sum[["__x_bin", "__+std"]].copy()
+            data_group["+std"].columns = ["__x_bin", y_name]
+            data_group["+std"]["__stat"] = "+std"
+            data_group["+std"].reset_index(drop=True, inplace=True)
+            # remove NaNs - caused by 
+
+            data_group["-std"] = data_sum[["__x_bin", "__-std"]].copy()
+            data_group["-std"].columns = ["__x_bin", y_name]
+            data_group["-std"]["__stat"] = "-std"
+            data_group["-std"].reset_index(drop=True, inplace=True)
+
+            # Get polygon coordinates
+            polygon_x = data_group["+std"]["__x_bin"].copy()
+            polygon_x = pd.concat([polygon_x, data_group["-std"]["__x_bin"][::-1]].copy())
+            polygon_y = data_group["+std"][y_name].copy()
+            polygon_y = pd.concat([polygon_y, data_group["-std"][y_name][::-1]].copy())
+
+            polygon = pd.concat([polygon_x, polygon_y], axis="columns")
+
+            # Construct plot
+            plot = plot + p9.ggtitle(
+                title
+            )
+
+            plot = plot + p9.scales.scale_color_manual(
+                values={"mean":"#f00000", "+std":"#000000", "-std":"#000000"}, 
+                na_value=self.color_na
+            )
+            plot += p9.labs(color=f"mean±std({y_stat}({y}))")
+
+            plot += p9.geom_polygon(
+                data=polygon,
+                mapping=p9.aes(x="__x_bin", y=y_name),
+                color=None,
+                fill="#c0c0c0",
+                alpha=0.5,
+                inherit_aes=False
+            )
+
+            for name in ["+std", "-std", "mean"]:
+                data = data_group[name]
+                data.sort_values("__x_bin")
+                plot += p9.geom_path(
+                    data=data,
+                    mapping=p9.aes(x="__x_bin", y=y_name, color="__stat"),
+                    inherit_aes=False,
+                    size=1.0
+                )
+
+        else:
+            if c:
+                plot = self._plot_colorscale(plot)
+            
+                data_grouped = {x:y for x, y in data_lowess.groupby(by=c, sort=False)}
+
+                for name in data_grouped:
+                    data = data_grouped[name]
+                    data.sort_values(by=x, inplace=True)
+                    plot += p9.geom_path(
+                        data=data,
+                        mapping=p9.aes(x=x, y=y, color=c),
+                        inherit_aes=False,
+                        size=1.0
+                    )
+            else:
+                data_lowess.sort_values(by=x, inplace=True)
+                plot += p9.geom_path(
+                    data=data_lowess,
+                    mapping=p9.aes(x=x, y=y),
                     inherit_aes=False
                 )
 
@@ -1929,26 +2075,37 @@ class Plotter():
         return temp
 
     @staticmethod
-    def _lowess(data: pd.DataFrame, x: str, y: str) -> pd.DataFrame:
+    def _lowess(data: pd.DataFrame, x: str, y: str, fraction: float=0.1, it:int=1, delta: float=None) -> pd.DataFrame:
         """
         Performs LOcally WEighted Scatterplot Smoothing on the y value at the given x value
             :param data: the input dataframe
             :param x: the x-axis
             :param y: the y-axis
+            :param fraction: the fraction of the data to use when estimating each y-value
+            :param it: the number of residual-based reweightings to perfrom
+            :param delta: distance within which to use linear-interpolaition instead of weighted regression. If None delta is approximated.
             :returns: pd.Dataframe of x and smoothed y
         """
         from statsmodels import nonparametric
+
+        if delta is None:
+            delta = 0.01 * 1024
+
         lowess = nonparametric.smoothers_lowess.lowess(
             endog=data[y],
             exog=data[x],
-            frac=0.1,
-            it=5,
-            delta=0.0,
+            frac=fraction,
+            it=it,
+            delta=delta,
             is_sorted=False,
             missing="drop",
             return_sorted=True
         )
         lowess = pd.DataFrame(lowess, columns=[x, y])
+
+        if(pd.isnull(lowess[y]).any()):
+            print("WARNING: lowess smoothing returned NA: insufficient variability. Consider increasing the estimation fraction.")
+
         lowess.drop_duplicates(inplace=True)
 
         return lowess

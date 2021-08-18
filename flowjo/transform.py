@@ -63,11 +63,12 @@ The biexponential transform class
 
 """
 from __future__ import annotations
-from typing import List, Dict, Tuple
+from typing import Callable, List, Dict, Tuple
 
 import numpy as np
 import bisect
 import copy
+import sys
 
 class _AbstractGenerator():
     """
@@ -75,6 +76,20 @@ class _AbstractGenerator():
     for 'infinite' range transforms. Should be subclassed for a scale-specific implementation.
     Is defined to only generate labels/ticks in the specified (global) range.
     """
+    _superscript: Dict[str, str]={
+        "-":"⁻",
+        "0":"⁰",
+        "1":"¹",
+        "2":"²",
+        "3":"³",
+        "4":"⁴",
+        "5":"⁵",
+        "6":"⁶",
+        "7":"⁷",
+        "8":"⁸",
+        "9":"⁹"
+    }
+
     def __init__(self):
         pass
 
@@ -266,20 +281,6 @@ class Log10Generator(_AbstractGenerator):
     """
     Generates labels, minor/major tick locations for a log10 scale
     """
-    _superscript: Dict[str, str]={
-        "-":"⁻",
-        "0":"⁰",
-        "1":"¹",
-        "2":"²",
-        "3":"³",
-        "4":"⁴",
-        "5":"⁵",
-        "6":"⁶",
-        "7":"⁷",
-        "8":"⁸",
-        "9":"⁹"
-    }
-
     def __init__(self):
         super().__init__()
 
@@ -485,22 +486,8 @@ class Log10Generator(_AbstractGenerator):
 
 class BiexGenerator(_AbstractGenerator):
     """
-    Generates labels, minor/major tick locations for a biexponential scale
+    Generates labels, minor/major tick locations for a biexponential-like scales
     """
-    _superscript: Dict[str, str]={
-        "-":"⁻",
-        "0":"⁰",
-        "1":"¹",
-        "2":"²",
-        "3":"³",
-        "4":"⁴",
-        "5":"⁵",
-        "6":"⁶",
-        "7":"⁷",
-        "8":"⁸",
-        "9":"⁹"
-    }
-
     def __init__(self):
         super().__init__()
 
@@ -1098,9 +1085,9 @@ class Biex(_Abstract):
             index = bisect.bisect_right(self.lookup, data[i])
 
             if not index:
-                value = self.l_start-1.0
+                value = self.l_start
             elif index == len(self.lookup):
-                value = self.l_end+1.0
+                value = self.l_end
             else:
                 value = self.values[index]
 
@@ -1172,8 +1159,6 @@ class Biex(_Abstract):
     def _build_lookup(self):
         """
         Builds the lookup table for the biexponential transform
-            :param start: the local space start
-            :param end: the local space end
         """
         # Source paper: David R. Parks, Mario Roederer, Wayne A. Moore.  A new “Logicle” display method avoids deceptive effects of logarithmic scaling for low signals and compensated data.  Cytometry Part A, Volume 69A, Issue 6, pages 541-551, June 2006.
         # Use the FlowJo implementation, as transformed by CytoLib: https://github.com/RGLab/cytolib/blob/master/src/transformation.cpp directly from the FlowJo java implementation
@@ -1231,7 +1216,7 @@ class Biex(_Abstract):
             vals[i] = i * step
             positive[i] = np.exp(i * fraction * positive_range)
             negative[i] = np.exp(i * fraction * (-negative_range))
-        
+
         s = np.exp((positive_range + negative_range) * (width + extra / decades))
         for i in range(0, n_points, 1):
             negative[i] *= s
@@ -1322,3 +1307,752 @@ class Biex(_Abstract):
 
     def __repr__(self) -> str:
         return f"(BiexTransform:[{self.g_end};{self.width:.1f};{self.pos_decade:.1f}]->[{self.l_start}-{self.l_end}])"
+
+class Fasinh(_Abstract):
+    """
+    Represents a inverse hyperblic sine transformation.
+        :param l_start: start local value
+        :param l_end: end local value
+        :param t: global end value / top of scale
+        :param m: the number of (positive) decades
+        :param a: the number of additional negative decades
+        :param w: (unused) the number of decades in the linear section
+        :param length: (unused) the lookup table resolution
+    """
+    def __init__(self, l_start: float=0, l_end: float=1023, t: float=262144, m: float=5.418539922, a: float=0.5, w: float=-262144, length: int=256):
+        super().__init__()
+        self.generator = BiexGenerator()
+
+        self.l_start: float = l_start
+        self.l_end: float = l_end
+        self.g_end: float = t   # for adherence to the _Abstract api, otherwise unused
+        self.t: float = t
+        self.m: float = m
+        self.a: float = a
+        self.w: float = w   #unused - likely a reference to flowjo's implementation
+        self.length: int = length   #unused - likely a reference flowjo's implementation
+
+    def scaler(self, data: List[float]) -> List[float]:
+        """
+        The scaling function
+            :param data: the data to scale
+        """
+        data = copy.deepcopy(data)
+
+        #                   asinh(x sinh(M ln(10)) / T) + A ln(10)
+        # fasinh(x,T,M,A) = ──────────────────────────────────────
+        #                               (M + A)ln(10)
+        #
+        #                   asinh(x sinh(M ln(10)) / T)      A ln(10)
+        # fasinh(x,T,M,A) = ─────────────────────────── + ─────────────
+        #                           (M + A)ln(10)         (M + A)ln(10)
+        #
+        #                          1             ┌     sinh(M ln(10)) ┐     A ln(10)
+        # fasinh(x,T,M,A) = ───────────── * asinh│ x * ────────────── │ + ─────────────
+        #                   (M + A)ln(10)        └           T        ┘   (M + A)ln(10)
+
+        #
+        # fasinh(x,T,M,A) = a * asinh(x * b) + c
+        #
+        #           1                 sinh(M ln(10))             
+        # a = ─────────────       b = ──────────────       c = A ln(10) * a
+        #     (M + A)ln(10)                 T                  
+
+        # Constants
+        ln10 = np.log(10)
+        a = 1 / ( (self.m + self.a) * ln10)
+        b = ( np.sinh(self.m * ln10) ) / self.t
+        c = ( self.a * ln10) * a
+
+        # scale
+        for i in range(0, len(data)):
+            if data[i] is None:
+                continue
+
+            data[i] = (a * np.arcsinh((data[i] * b)) ) + c
+            data[i] = (data[i] * self.l_end) + self.l_start
+
+        return data
+
+    def labels(self) -> List[str]:
+        """
+        Returns the labels for the major ticks (for coordinates use major_ticks())
+        """
+        g_start = -10**self.a
+        return self.generator.labels(g_start, self.t)
+ 
+    def major_ticks(self) -> List[float]:
+        """
+        Returns the major tick locations
+        """
+        g_start = -10**self.a
+        ticks = self.generator.major_ticks(g_start, self.t)
+
+        ticks = self.scaler(ticks)
+
+        return ticks
+    
+    def minor_ticks(self) -> List[float]:
+        """
+        Returns the minor tick locations
+        """
+        g_start = -10**self.a
+        ticks = self.generator.minor_ticks(g_start, self.t)
+
+        ticks = self.scaler(ticks)
+
+        return ticks
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, _Abstract):
+            raise ValueError("can only test equality against other transform classes")
+
+        if not isinstance(other, Fasinh):
+            return False
+        
+        if self.t != other.t:
+            return False
+        if self.m != other.m:
+            return False
+        if self.a != other.a:
+            return False
+        if self.l_start != other.l_start:
+            return False
+        if self.l_end != other.l_end:
+            return False
+
+        return True
+
+    def __repr__(self) -> str:
+        return f"(FasinhTransform:[{self.t};{self.m:.1f};{self.a:.1f}]->[{self.l_start}-{self.l_end}])"
+
+class Hyperlog(_Abstract):
+    """
+    Represents a hyperlog transformation.
+    Implementation based on https://github.com/RGLab/flowCore/blob/master/src/Hyperlog.cpp
+        :param l_start: start local value
+        :param l_end: end local value
+        :param t: global end value / top of scale
+        :param m: the number of (positive) decades
+        :param a: the number of additional negative decades
+        :param w: the number of decades in the linear section
+        :param length: (unused) the lookup table resolution
+    """
+    TAYLOR_LENGTH: int = 16
+    HALLEY_ITERATIONS: int = 10
+
+    def __init__(self, l_start: float=0.0, l_end: float=1023.0, t: float=262144.0, m: float=5.418539922, a: float=0.5, w: float=-262144, length: int=256):
+        super().__init__()
+        self.generator = BiexGenerator()
+
+        raise Exception("HYPERLOG IS STILL INCORRECT!")
+
+        self.l_start: float = l_start
+        self.l_end: float = l_end
+        self.g_end: float = t   # for adherence to the _Abstract api, otherwise unused
+
+        # Standard parameters
+        self.t: float = t
+        self.m: float = m
+        self.a: float = a
+        self.w: float = w
+        self.length: int = length   #unused - likely a reference flowjo's implementation
+
+        # Actual parameters
+        # Choose the data zero location and the width of the linearization region
+        # to match the corresponding logicle scale
+        self._w: float = self.w / (self.m + self.a)
+        self._x2: float = self.a / (self.m + self.a)
+        self._x1: float = self._x2 + self._w
+        self._x0: float = self._x2 + (2 * self._w)
+        self._b: float = (self.m + self.a) * np.log(10.0)
+        e2bx0: float = np.exp(self._b * self._x0)
+        c_a: float = e2bx0 / self._w
+        f_a: float = np.exp(self._b * self._x1) + (c_a * self._x1)
+        self._a: float = self.t / ((np.exp(self._b) + c_a) - f_a)
+        self._c: float = c_a * self._a
+        self._f: float = f_a * self._a
+
+        # Use Taylor series near x1, i.e., data zero to avoid round off problems of formal definition
+        self._taylor_x: float = self._x1 + (self._w / 4)
+
+        # Compute coefficients of the Taylor series
+        coef: float = self._a * np.exp(self._b * self._x1)
+        self._taylor: List[float] = [0.0]*self.TAYLOR_LENGTH
+        for i in range(0, self.TAYLOR_LENGTH):
+            coef *= self._b / (i + 1)
+            self._taylor[i] = coef
+
+        self._taylor[0] += self._c # hyperlog condition
+        self._inverse_x0 = self._inverse(self._x0)
+
+    def scale(self, data: float) -> float:
+        """
+        Scales the value according to hyperlog transform
+        """
+        # Handle true zero separately
+        if data == 0:
+            #return self._x1
+            return (self._x1 * (self.l_end - self.l_start)) + self.l_start
+
+        # Reflect negative values
+        negative: bool = data < 0
+        if negative:
+            data = -data
+
+        # Initial guess at solution
+        x: float = None
+        if data < self._inverse_x0:
+            # Use linear approximation in the quasi linear region
+            x = self._x1 + data * self._w / self._inverse_x0
+        else:
+            # otherwise use ordinary logarithm
+            x = np.log(data / self._a) / self._b
+        
+        # Try for double precision unless in extended range
+        tolerance: float = 3 * sys.float_info.epsilon
+        if x > 1:
+            tolerance = 3 * x * sys.float_info.epsilon
+
+        for i in range(0, self.HALLEY_ITERATIONS):
+            # Compute the funciton and its first two derivatives
+            ae2bx: float = self._a * np.exp(self._b * x)
+            # double ce2mdx = self._c / np.exp(self._d * x)
+            y: float = None
+            if x < self._taylor_x:
+                # near zero use the Taylor series
+                t_x: float = x - self._x1
+                t_sum: float = self._taylor[-1] * t_x
+                for j in range(self.TAYLOR_LENGTH-2, -1, -1):
+                    t_sum = (t_sum + self._taylor[j]) * t_x
+                y = t_sum - data
+            else:
+                # This formulation has better roundoff behavior
+                y = (ae2bx + self._c * x) - (self._f + data)
+
+            abe2bx: float = self._b * ae2bx
+            dy: float = abe2bx + self._c
+            ddy: float = self._b * abe2bx
+
+            # This is Halley's method with cubic convergence
+            delta: float = y / (dy * (1 - y * ddy / (2 * dy * dy)))
+            x -= delta
+
+            # if we have reached the desired precision we are done
+            if abs(delta) < tolerance:
+                # Handle negative arguments
+                if negative:
+                    x = 2 * self._x1 - x
+                    return (x * (self.l_end - self.l_start)) + self.l_start
+                else:
+                    #return x
+                    return (x * (self.l_end - self.l_start)) + self.l_start
+
+        raise ValueError("Hyperlog transform did not converge")
+
+    def scaler(self, data: List[float]) -> List[float]:
+        """
+        The scaling function
+            :param data: the data to scale
+        """
+        for i in range(0, len(data)):
+            data[i] = self.scale(data[i])
+
+        return data
+
+    def _inverse(self, data: float) -> float:
+        """
+        Reverts the scaled data back into unscaled form.
+        Expects a data range of 0-1
+        """
+        # Reflect negative scale regions
+        negative: bool = data < self._x1
+        if negative:
+            data: float = 2 * self._x1 - data
+
+        # Double inverse
+        if data < self._taylor_x:
+            # near x1, i.e., data zero use the series expansion
+            t_x: float = data - self._x1
+            t_sum: float = self._taylor[-1] * t_x
+            for j in range(self.TAYLOR_LENGTH-2, -1, -1):
+                t_sum = (t_sum + self._taylor[j]) * t_x
+            inverse = t_sum
+        else:
+            # This formulation has better roundoff behavior
+            inverse = (self._a * np.exp(self._b * data) + self._c * data) - self._f
+        
+        # Handle scale for negative values
+        if negative:
+            return -inverse
+        else:
+            return inverse
+
+    def labels(self) -> List[str]:
+        """
+        Returns the labels for the major ticks (for coordinates use major_ticks())
+        """
+        g_start = self._inverse(0.0)
+        labels = self.generator.labels(g_start, self.t)
+
+        # remove too-close-to-zero labels
+        # to prevent overlapping labels
+
+        # find zero
+        i_0 = None
+        for i, label in enumerate(labels):
+            if label == "0":
+                i_0 = i
+                break
+
+        # No zero
+        if i_0 is None:
+            return labels
+
+        labels_x = self.scaler(self.generator.major_ticks(g_start, self.t))
+
+        x_0 = labels_x[i_0]
+        for i in range(i_0 + 1, len(labels)):
+            if (labels_x[i] - x_0) < ((self.l_end - self.l_start) * 0.035):
+                labels[i] = ""
+                labels[i_0 - (i-i_0)] = ""
+
+        return labels
+ 
+    def major_ticks(self) -> List[float]:
+        """
+        Returns the major tick locations
+        """
+        g_start = self._inverse(0.0)
+        ticks = self.generator.major_ticks(g_start, self.t)
+
+        ticks = self.scaler(ticks)
+
+        return ticks
+    
+    def minor_ticks(self) -> List[float]:
+        """
+        Returns the minor tick locations
+        """
+        g_start = self._inverse(0.0)
+        ticks = self.generator.minor_ticks(g_start, self.t)
+
+        ticks = self.scaler(ticks)
+
+        return ticks
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, _Abstract):
+            raise ValueError("can only test equality against other transform classes")
+
+        if not isinstance(other, Hyperlog):
+            return False
+        
+        if self.t != other.t:
+            return False
+        if self.m != other.m:
+            return False
+        if self.a != other.a:
+            return False
+        if self.l_start != other.l_start:
+            return False
+        if self.l_end != other.l_end:
+            return False
+
+        return True
+
+    def __repr__(self) -> str:
+        return f"(HyperlogTransform:[{self.t};{self.m:.1f};{self.a:.1f};{self.w:.1f}]->[{self.l_start}-{self.l_end}])"
+
+class Logicle(_Abstract):
+    """
+    Represents the logicle transformation.
+    Implementation based on https://github.com/RGLab/flowCore/src/Logicle.cpp
+        :param l_start: start local value
+        :param l_end: end local value
+        :param t: global end value / top of scale
+        :param m: the number of (positive) decades
+        :param a: the number of additional negative decades
+        :param w: the number of decades in the linear section
+    """
+    TAYLOR_LENGTH: int = 16
+    HALLEY_ITERATIONS: int = 20
+
+    def __init__(self, l_start: float=0, l_end: float=1023, t: float=262144, m: float=5.418539922, a: float=0.5, w: float=2.652246341):
+        super().__init__()
+        self.generator = BiexGenerator()
+
+        self.l_start: float = l_start
+        self.l_end: float = l_end
+        self.g_end: float = t   # for adherence to the _Abstract api, otherwise unused
+        
+        # standard parameters
+        self.t: float = t   # top of scale
+        self.m: float = m   # number of decades of log component
+        self.w: float = w   # number of decades of linear component
+        self.a: float = a   # additional negative decades
+
+        # Actual parameters, formulas from biexponential paper
+        self._w: float = self.w / (self.m + self.a)
+        self._x2: float = self.a / (self.m + self.a)
+        self._x1: float = self._x2 + self._w
+        self._x0: float = self._x2 + (2 * self._w)
+        self._b: float = (self.m + self.a) * np.log(10.0)
+        self._d: float = self._solve(self._b, self._w)
+        c_a: float = np.exp(self._x0 * (self._b + self._d))
+        mf_a: float = np.exp(self._b * self._x1) - (c_a / np.exp(self._d * self._x1))
+        self._a: float = self.t / (np.exp(self._b) - mf_a - (c_a / np.exp(self._d)))
+        self._c: float = c_a * self._a
+        self._f: float = -mf_a * self._a
+
+        # Use Taylor series near x1, i.e., the data near to zero
+        # to avoid round-off problems of formal definition
+        self._taylor_x: float = self._x1 + (self._w / 4)
+
+        # Compute coefficients of the Taylor series
+        pos_coef: float = self._a * np.exp(self._b * self._x1)
+        neg_coef: float = -self._c / np.exp(self._d * self._x1)
+
+        # 16 is enough for full precision of typical scales
+        self._taylor: List[float] = [None]*self.TAYLOR_LENGTH
+        for i in range(0, self.TAYLOR_LENGTH):
+            pos_coef *= (self._b / (i + 1))
+            neg_coef *= (-self._d / (i + 1))
+            self._taylor[i] = pos_coef + neg_coef
+        # Exact result of logicle condition
+        self._taylor[1] = 0.0
+
+    def _solve(self, b:float, w:float) -> float:
+        """
+        Approximate the root of the logicle transform
+        """
+        # w==0 means it's really arcsinh
+        if w == 0:
+            return b
+
+        # precision is the same as that of b
+        tolerance: float = 2 * b * sys.float_info.epsilon
+        d_lo: float = 0.0 + sys.float_info.epsilon
+        d_hi: float = b
+
+        d: float = Logicle._R_zeroin(
+            ax=d_lo,
+            bx=d_hi,
+            f=self._logicle,
+            tol=tolerance,
+            maxit=20
+        )
+        return d
+
+    def _logicle(self, x: float) -> float:
+        """
+        Logicle function: f(w,b) = 2 * (ln(d) - ln(b)) + w * (b + d)
+        """
+        return 2 * ( np.log(x) - np.log(self._b)) + (self._w * (self._b + x))
+    
+    @staticmethod
+    def _R_zeroin(ax: float, bx: float, f: Callable, tol: float, maxit: int) -> float:
+        """
+        Root finder routines, copied from stats/src/zeroin.c
+            :param ax: left border of the search range
+            :param bx: right border of the search range
+            :param f: the function under investigation
+            :param maxit: maximum number of iterations            
+        """
+        fa: float= f(ax)
+        fb: float= f(bx)
+        return Logicle._R_zeroin2(ax=ax, bx=bx, fa=fa, fb=fb, f=f, tol=tol, maxit=maxit)
+
+    @staticmethod
+    def _R_zeroin2(ax: float, bx: float, fa: float, fb: float, f: Callable, tol: float, maxit: int) -> float:
+        """
+        Root finder routine; faster for "expensive" f(), in those typical case where f(ax) and f(bx) are available anyway
+            :param ax: left border of the search range
+            :param bx: right border of the search range
+            :param fa, fb: f(a), f(b)
+            :param f: function under investigation
+            :param tol: acceptable tolerance
+            :param maxit: maximum number of iterations
+        """
+        a: float=ax
+        b: float=bx
+        c: float=a
+        fc: float=fa
+        maxit: int = maxit + 1
+
+        # First test if we have found a root at an endpoint
+        if fa == 0.0:
+            #tol = 0.0, maxit = 0
+            return a
+        if fb == 0.0:
+            #tol = 0.0, maxit = 0
+            return b
+        
+        # Main iteration loop
+        while maxit:
+            maxit -= 1
+
+            prev_step: float = b-a  # Distance from the last but one to the last approximation
+            tol_act: float = None   # Actual tolerance
+            p: float = None         # interpolation step is calculated in the form of p/q
+            q: float = None         # division operation is delayed until the last moment
+            new_step: float = None  # step at this iteration
+
+            if abs(fc) < abs(fb):
+                # Swap data for b to be the best approximation
+                a=b
+                b=c
+                c=a
+                fa=fb
+                fb=fc
+                fc=fa
+            tol_act = 2 * sys.float_info.epsilon * abs(b) + tol/2
+            new_step = (c-b)/2
+
+            if abs(new_step) <= tol_act or fb == 0.0:
+                #maxit -= maxit, tol = abs(c-b)
+                return b # Acceptable approximation is found
+
+            # Decide if the interpolation can be tried
+            if abs(prev_step) >= tol_act and abs(fa) > abs(fb):
+                # if prev_step was large enough && in true direction
+                # interpolation may be tried
+                t1: float = None
+                t2: float = None
+                cb: float = None
+                cb = c-b
+                
+                if a == c:
+                    # if we have only two distinct points, linear interpolation can only be applied
+                    t1 = fb/fa
+                    p = cb * t1
+                    q = 1.0 - t1
+                else:
+                    # else Quadratic inverse interpolation
+                    q = fa/fc
+                    t1 = fb/fc
+                    t2 = fb/fa
+                    p = t2 * (cb*q*(q-t1) - (b-a)*(t1-1.0))
+                    q = (q-1.0) * (t1-1.0) * (t2-1.0)
+                
+                if p > 0.0:
+                    # p was calculated with the opposite sign; make p positive and assign possible minus to q
+                    q = -q
+                else:
+                    p = -p
+
+                if p < (0.75 * cb * q - abs(tol_act * q) /2) and p < abs(prev_step*q/2):
+                    # if b+p/q falls in [b,c] and isnt too large; it is accepted
+                    # if p/q is too large then the bisection procedure can reduce [b,c] range to a higher extent
+                    new_step = p/q
+            
+            if abs(new_step) < tol_act:
+                # Adjust the step to be not less than tolerance
+                if new_step > 0.0:
+                    new_step = tol_act
+                else:
+                    new_step = -tol_act
+
+            # Store the previous approximation
+            a=b
+            fa=fb
+            # Step to a new approximation
+            b += new_step
+            fb = f(b)
+
+            if (fb > 0.0 and fc > 0.0) or (fb < 0.0 and fc < 0.0):
+                # Adjust c for it ot have a sign opposite to that of b
+                c = a
+                fc = fa
+
+        # Failure to approximate
+        # tol = abs(c-b), maxit = -1
+        return b
+
+    def scale(self, data: float) -> float:
+        """
+        Scales the value according to logicle transform
+        """
+        # Handle true zero separately
+        if data == 0:
+            #return self._x1
+            return (self._x1 * (self.l_end - self.l_start)) + self.l_start
+        
+        # Reflect negative values
+        negative: bool = data < 0
+        if negative:
+            data = -data
+
+        # Initial guess at solution
+        x: float = None
+        if data < self._f:
+            # Use linear approximation in the quasi linear region
+            x = self._x1 + data / self._taylor[0]
+        else:
+            # otherwise use ordinary logarithm
+            x = np.log(data / self._a) / self._b
+
+        # try for double precision unless in extended range
+        tolerance: float = 3 * sys.float_info.epsilon
+        if x > 1:
+            tolerance = 3 * x * sys.float_info.epsilon
+
+        for i in range(0, self.HALLEY_ITERATIONS):
+            # compute the function and its first two derivatives
+            ae2bx: float = self._a * np.exp(self._b * x)
+            ce2mdx: float = self._c / np.exp(self._d * x)
+
+            y: float = None
+            if x < self._taylor_x:
+
+                # Near zero use the Taylor series
+                # Taylor series is around x1
+                t_x: float = x - self._x1
+                # Note that taylor[1] should be identical to zero according to logical condition
+                t_sum: float = self._taylor[-1] * t_x
+                for j in range(self.TAYLOR_LENGTH-2, 1, -1):
+                    t_sum = (t_sum + self._taylor[j]) * t_x
+                y = ((t_sum * t_x + self._taylor[0]) * t_x) - data
+            else:
+                # This formulation bas better roundoff behavior
+                y = (ae2bx + self._f) - (ce2mdx + data)
+            
+            abe2bx: float = self._b * ae2bx
+            cde2mdx: float = self._d * ce2mdx
+            dy: float = abe2bx + cde2mdx
+            ddy: float = (self._b * abe2bx) - (self._d * cde2mdx)
+
+            # This is Halley's method with cubic convergence
+            delta: float = y / (dy * (1 - ((y * ddy) / (2 * dy * dy))))
+            x -= delta
+
+            # if we have reached the desired precision we're done
+            if abs(delta) < tolerance:
+                # handle negative arguments
+                if negative:
+                    value = 2 * self._x1 - x
+                    #return value
+                    return (value * (self.l_end - self.l_start)) + self.l_start
+                else:
+                    value = x
+                    #return value
+                    return (value * (self.l_end - self.l_start)) + self.l_start
+
+        raise ValueError("Logicle transform did not converge")
+
+    def scaler(self, data: List[float]) -> List[float]:
+        """
+        The scaling function
+            :param data: the data to scale
+        """
+        for i in range(0, len(data)):
+            data[i] = self.scale(data[i])
+
+        return data
+
+    def _inverse(self, data: float) -> float:
+        """
+        Reverts the scaled data back into unscaled form.
+        Expects a data range of 0-1
+        """
+        # reflect negative scale regions
+        negative: bool = data < self._x1
+        if negative:
+            data = 2 * self._x1 - data
+
+        # compute the biexponetial
+        inverse: float = None
+        if data < self._taylor_x:
+            # near x1, i.e., data zero uses the series expansion
+            t_x: float = data - self._x1
+            # Note that taylor[1] should be identical to zero according to logical condition
+            t_sum: float = self._taylor[-1] * t_x
+            for j in range(self.TAYLOR_LENGTH-2, 1, -1):
+                t_sum = (t_sum + self._taylor[j]) * t_x
+            inverse = ((t_sum * t_x + self._taylor[0]) * t_x) - data
+        else:
+            inverse = (self._a * np.exp(self._b * data) + self._f) - (self._c / np.exp(self._d * data))
+        
+        # handle scale for negative values
+        if negative:
+            return -inverse
+        else:
+            return inverse
+
+    def labels(self) -> List[str]:
+        """
+        Returns the labels for the major ticks (for coordinates use major_ticks())
+        """
+        g_start = self._inverse(0.0)
+        labels = self.generator.labels(g_start, self.t)
+
+        # remove too-close-to-zero labels
+        # to prevent overlapping labels
+
+        # find zero
+        i_0 = None
+        for i, label in enumerate(labels):
+            if label == "0":
+                i_0 = i
+                break
+
+        # No zero
+        if i_0 is None:
+            return labels
+
+        labels_x = self.scaler(self.generator.major_ticks(g_start, self.t))
+
+        x_0 = labels_x[i_0]
+        for i in range(i_0 + 1, len(labels)):
+            if (labels_x[i] - x_0) < ((self.l_end - self.l_start) * 0.035):
+                labels[i] = ""
+                labels[i_0 - (i-i_0)] = ""
+
+        return labels
+ 
+    def major_ticks(self) -> List[float]:
+        """
+        Returns the major tick locations
+        """
+        g_start = self._inverse(0.0)
+        ticks = self.generator.major_ticks(g_start, self.t)
+
+        ticks = self.scaler(ticks)
+
+        return ticks
+    
+    def minor_ticks(self) -> List[float]:
+        """
+        Returns the minor tick locations
+        """
+        g_start = self._inverse(0.0)
+        ticks = self.generator.minor_ticks(g_start, self.t)
+
+        ticks = self.scaler(ticks)
+
+        return ticks
+    
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, _Abstract):
+            raise ValueError("can only test equality against other transform classes")
+
+        if not isinstance(other, Logicle):
+            return False
+        
+        if self.l_start != other.l_start:
+            return False
+        if self.l_end != other.l_end:
+            return False
+        if self.t != other.t:
+            return False
+        if self.m != other.m:
+            return False
+        if self.a != other.a:
+            return False
+        if self.w != other.w:
+            return False
+
+        return True
+
+    def __repr__(self) -> str:
+        return f"(LogicleTransform:[{self.t};{self.m:.2f};{self.a:.1f};{self.w:.1f}]->[{self.l_start}-{self.l_end}])"

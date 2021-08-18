@@ -14,7 +14,7 @@ AJ Zwijnenburg
 ## Requirements
 
 python >= 3.8.1  
-pandas >= 1.1.1  
+pandas >= 1.3.0  
 lxml >= 4.5.2 (for matrix & wsp module)  
 plotnine >= 0.7.1 (for plot module)  
 scikit-learn >= 0.23.2 (for plot module Plotter.add_pca() & Plotter.density_overlay())  
@@ -303,7 +303,9 @@ v1.12 - GroupGates now properly implemented
 v1.13 - Implemented proper histogram graph and (much) faster density raster plots  
 v1.14 - Improved implementation of transformations and rasterization  
 v1.15 - Implemented masking  
-v1.16 - Implemented flowjo gate and density overlays
+v1.16 - Implemented flowjo gate and density overlays  
+v1.17 - Implemented statistics gate nodes  
+v1.18 - Implemented reverse hyperbolic sin & logicle transforms. Updated to pandas 1.3
 
 ## License
 
