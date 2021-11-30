@@ -436,6 +436,7 @@ class SampleGate(AbstractGate):
             :param factor: specifyer for factorization of gates membership. Dict[factor_column_name, Dict[gate_id, factor_level_name]]
             :param translate: whether to change the column identifiers into the column names
         """
+        # This data is already 'gated'
         data = self.data(translate=translate)
 
         remove = self.path + "/"
@@ -447,7 +448,8 @@ class SampleGate(AbstractGate):
             gate = self._gates[gate]
             if isinstance(gate, SampleGate):
                 gate._attach_gate(in_gate, remove)
-        # Gate data is necessary for factorization
+
+        # Gate data is necessary for factorization; this causes NaN's for events which are outside of self._in_gate
         data = pd.concat([data, *in_gate], axis=1)
 
         # factorize gate columns
@@ -483,6 +485,9 @@ class SampleGate(AbstractGate):
             data = pd.concat([data, *new_factors], axis=1)
             # Remove now redundant columns
             #data.drop(columns=redundant, inplace=True)
+
+        # Reapply current gate
+        data = data[self._in_gate]
         
         return data
 

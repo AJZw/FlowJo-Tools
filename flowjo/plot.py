@@ -1277,7 +1277,7 @@ class Plotter():
 
         return plots
 
-    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, min_events: int=4, min_repeats: int=2) -> p9.ggplot:
+    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, smooth: bool=True, min_events: int=4, min_repeats: int=2) -> p9.ggplot:
         """
         Plots a correlation line graph of x versus y. If group is defined, will make a line per level in group
             :param x: the x dimension
@@ -1286,6 +1286,7 @@ class Plotter():
             :param y_stat: the condensor the apply to the y dimension, choose from ["max", "min", "sum", "mean", "median", "mode", "var", "std"]
             :param summarize: whether to summarize the data into a mean with standard deviations
             :param bins: the number of bins in the x dimension
+            :param smooth: whether to apply savitzky-golay smoothing on the curves
             :param min_events: the minimum amount of events in a bin
             :param min_repeats: the minimum amount of repeats in a summarized bin
 
@@ -1342,13 +1343,13 @@ class Plotter():
             # filter on minimum events
             if min_events > 1:
                 data_indexed = data_indexed.filter(lambda x: len(x) > min_events)
-                data_indexed = data_indexed.groupby(by=["__x_bin"], axis=0, sort=False, dropna=True)
+                data_indexed = data_indexed.groupby(by=["__x_bin"], axis=0, sort=True, dropna=True)
         else:
             data = data[["__x_bin", y, c]]
-            data_indexed = data.groupby(by=[c, "__x_bin"], axis=0, sort=False, dropna=True)
+            data_indexed = data.groupby(by=[c, "__x_bin"], axis=0, sort=True, dropna=True)
             if min_events > 1:
                 data_indexed = data_indexed.filter(lambda x: len(x) > min_events)
-                data_indexed = data_indexed.groupby(by=[c, "__x_bin"], axis=0, sort=False, dropna=True)
+                data_indexed = data_indexed.groupby(by=[c, "__x_bin"], axis=0, sort=True, dropna=True)
         
         # calculate stats
         if y_stat == "max":
@@ -1365,13 +1366,13 @@ class Plotter():
             data_stat = data_indexed.mean()
         elif y_stat == "median":
             y_name = f"__median({y})"
-            data_stat = data_indexed.mean()
+            data_stat = data_indexed.median()
         elif y_stat == "mode":
             y_name = f"__mode({y})"
-            data_stat = data_indexed.mean()
+            data_stat = data_indexed.mode()
         elif y_stat == "var":
             y_name = f"__var({y})"
-            data_stat = data_indexed.std()
+            data_stat = data_indexed.var()
         elif y_stat == "std":
             y_name = f"__std({y})"
             data_stat = data_indexed.std()
@@ -1380,10 +1381,17 @@ class Plotter():
 
         # Remove multi-index
         data_stat.columns = [y_name]
+
         data_stat = data_stat.reset_index()
         data_stat = data_stat.loc[~data_stat[y_name].isna()]
 
         data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
+
+        if smooth:
+            data_smooth = {i:k for i, k in data_stat.groupby(c)}
+            for i in data_smooth:
+                data_smooth[i][y_name] = self._savitzky_golay(data_smooth[i][y_name], 21, 3)
+            data_stat = pd.concat(data_smooth.values())
 
         #########
         # build title
@@ -2103,12 +2111,81 @@ class Plotter():
         )
         lowess = pd.DataFrame(lowess, columns=[x, y])
 
-        if(pd.isnull(lowess[y]).any()):
+        if(pd.isnull(lowess[y]).all()):
             print("WARNING: lowess smoothing returned NA: insufficient variability. Consider increasing the estimation fraction.")
 
         lowess.drop_duplicates(inplace=True)
 
         return lowess
+
+    @staticmethod
+    def _savitzky_golay(y: pd.Series, window_size: int, order: int, deriv: int=0, rate: int=1):
+        """Smooth (and optionally differentiate) data with a Savitzky-Golay filter.
+        The Savitzky-Golay filter removes high frequency noise from data.
+        It has the advantage of preserving the original shape and
+        features of the signal better than other types of filtering
+        approaches, such as moving averages techniques.
+        Parameters
+        ----------
+        :param y: the values of the time history of the signal.
+        :param window_size: the length of the window. Must be an odd integer number.
+        :param order: the order of the polynomial used in the filtering. Must be less then `window_size` - 1.
+        :param deriv: the order of the derivative to compute (default = 0 means only smoothing)
+        
+        Returns
+        -------
+        ys : ndarray, shape (N)
+            the smoothed signal (or it's n-th derivative).
+        Notes
+        -----
+        The Savitzky-Golay is a type of low-pass filter, particularly
+        suited for smoothing noisy data. The main idea behind this
+        approach is to make for each point a least-square fit with a
+        polynomial of high order over a odd-sized window centered at
+        the point.
+        Examples
+        --------
+        t = np.linspace(-4, 4, 500)
+        y = np.exp( -t**2 ) + np.random.normal(0, 0.05, t.shape)
+        ysg = savitzky_golay(y, window_size=31, order=4)
+        import matplotlib.pyplot as plt
+        plt.plot(t, y, label='Noisy signal')
+        plt.plot(t, np.exp(-t**2), 'k', lw=1.5, label='Original signal')
+        plt.plot(t, ysg, 'r', label='Filtered signal')
+        plt.legend()
+        plt.show()
+        References
+        ----------
+        .. [1] A. Savitzky, M. J. E. Golay, Smoothing and Differentiation of
+        Data by Simplified Least Squares Procedures. Analytical
+        Chemistry, 1964, 36 (8), pp 1627-1639.
+        .. [2] Numerical Recipes 3rd Edition: The Art of Scientific Computing
+        W.H. Press, S.A. Teukolsky, W.T. Vetterling, B.P. Flannery
+        Cambridge University Press ISBN-13: 9780521880688
+        """
+        import numpy as np
+        from math import factorial
+        
+        try:
+            window_size = np.abs(np.int(window_size))
+            order = np.abs(np.int(order))
+        except ValueError:
+            raise ValueError("window_size and order have to be of type int")
+        if window_size % 2 != 1 or window_size < 1:
+            raise TypeError("window_size size must be a positive odd number")
+        if window_size < order + 2:
+            raise TypeError("window_size is too small for the polynomials order")
+        order_range = range(order+1)
+        half_window = (window_size -1) // 2
+        # precompute coefficients
+        b = np.mat([[k**i for i in order_range] for k in range(-half_window, half_window+1)])
+        m = np.linalg.pinv(b).A[deriv] * rate**deriv * factorial(deriv)
+        # pad the signal at the extremes with
+        # values taken from the signal itself
+        firstvals = y.iloc[0] - np.abs( y.iloc[1:half_window+1][::-1] - y.iloc[0] )
+        lastvals = y.iloc[-1] + np.abs(y.iloc[-half_window-1:-1][::-1] - y.iloc[-1])
+        y = np.concatenate((firstvals, y, lastvals))
+        return np.convolve( m[::-1], y, mode='valid')
 
     ## Dimensional reduction
 
