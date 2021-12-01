@@ -1874,6 +1874,13 @@ class Plotter():
 
         params = pd.Series([x, c,"__sample"]).dropna().unique()
         data: pd.DataFrame = self.data[params].copy()
+
+        # Special treatment for boolean types
+        if pd.api.types.is_bool_dtype(self.data[c]):
+            data[c] = data[c].astype("str")
+            if c_map is None:
+                c_map = {"True":self.tab10[0], "False":"#ffffff"}
+
         categories = pd.Series(data[c].unique())
         if c_map:
             if not categories.isin(c_map.keys()).all():
@@ -1916,13 +1923,6 @@ class Plotter():
                 include_lowest=True
             )
 
-            # Store range
-            i_range = i_data["__x"].astype("float")
-            if float(i_range.min()) < x_min:
-                x_min = i_range.min()
-            if float(i_range.max()) > x_max:
-                x_max = i_range.max()
-
             # Calculate fraq / bin
             output = pd.DataFrame(np.nan, index=bins_x_names, columns=categories, dtype="float")
             output.sort_index(inplace=True)
@@ -1942,6 +1942,12 @@ class Plotter():
             output = output.loc[~pd.isnull(output.iloc[:,0])]
             output["__x"] = output.index
             output["__sample"] = i_key
+
+            # Store range
+            if float(output["__x"].min()) < x_min:
+                x_min = output["__x"].min()
+            if float(output["__x"].max()) > x_max:
+                x_max = output["__x"].max()
 
             data_sample[i_key] = output
 
@@ -1973,11 +1979,16 @@ class Plotter():
         curves["__x"] = curves.index.astype("float")
         curves.reset_index(drop=True, inplace=True)
 
+        # smoothing can overfit (especially on edges) correct back to 1
+        if smooth:
+            curves[categories] = curves[categories].div(curves[categories].sum(axis=1), axis="index")
+        
         # Stack curves
         for i, cat in enumerate(categories):
             if i==0:
                 continue
             curves[cat] += curves[categories[i-1]]
+
 
         # Build polygons
         polygon = curves.shift(periods=1, axis=1, fill_value=0.0)
@@ -2010,6 +2021,7 @@ class Plotter():
             )
 
         plot = plot + p9.scale_y_continuous(
+            breaks=(0, 0.25, 0.5, 0.75, 1.0),
             expand=(0,0,0.1,0)
         )
 
