@@ -1277,7 +1277,7 @@ class Plotter():
 
         return plots
 
-    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, smooth: bool=True, min_events: int=4, min_repeats: int=2) -> p9.ggplot:
+    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, smooth: bool=True, min_events: int=4) -> p9.ggplot:
         """
         Plots a correlation line graph of x versus y. If group is defined, will make a line per level in group
             :param x: the x dimension
@@ -1288,7 +1288,6 @@ class Plotter():
             :param bins: the number of bins in the x dimension
             :param smooth: whether to apply savitzky-golay smoothing on the curves
             :param min_events: the minimum amount of events in a bin
-            :param min_repeats: the minimum amount of repeats in a summarized bin
 
         Note: the statistics are calculated on the transformed (=channel) data.
         """
@@ -1387,12 +1386,6 @@ class Plotter():
 
         data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
 
-        if smooth:
-            data_smooth = {i:k for i, k in data_stat.groupby(c)}
-            for i in data_smooth:
-                data_smooth[i][y_name] = self._savitzky_golay(data_smooth[i][y_name], 21, 3)
-            data_stat = pd.concat(data_smooth.values())
-
         #########
         # build title
         if self.name:
@@ -1407,20 +1400,35 @@ class Plotter():
         plot = self._plot_scale(plot, xlim=True, ylim=True, x=x, y=y)
 
         if summarize:
+            # For interpolation
+            x_min = data_stat["__x_bin"].min()
+            x_max = data_stat["__x_bin"].max()
+
+            # Now calculate average curves using linear interpolation to cross-gaps
+            x_axis = bins_x_names[bins_x_names.index(x_min):bins_x_names.index(x_max)+1]
+
+            curves = {}
+            for i, curve in data_stat.groupby(c):              
+                curve_interp = np.interp(x_axis, curve["__x_bin"], curve[y_name])
+
+                curve_interp = pd.DataFrame({"__x_bin":x_axis, y_name:curve_interp, "__sample":i})
+
+                # smoothing here
+                if smooth:
+                    curve_interp[y_name] = self._savitzky_golay(curve_interp[y_name], 21, 3)
+
+                curves[i] = curve_interp
+
+            data_stat = pd.concat(curves, ignore_index=True)
+    
             # Calculate mean and standard-deviation
             data_indexed = data_stat.groupby(by="__x_bin", axis=0, sort=False)
 
-            data_repeat = data_indexed.count()
             data_sum = data_indexed.mean()
             data_sum.columns = ["__mean"]
             data_sum["__std"] = data_indexed.std()
-            # remove NaNs (std of 1 value will return NaN)
-            data_sum["__std"][pd.isnull(data_sum["__std"])] = 0.0
             data_sum.sort_index(inplace=True)
             data_sum["__x_bin"] = data_sum.index
-
-            # filter for minimum amount of repeats
-            data_sum = data_sum.loc[data_repeat.iloc[:,0] >= min_repeats]
 
             # statistics
             # take statistic before summarisation to have a more relevant R value
@@ -1489,6 +1497,13 @@ class Plotter():
                 )
 
         else:
+            if smooth:
+                #print(data_stat)
+                data_smooth = {i:k for i, k in data_stat.groupby(c)}
+                for i in data_smooth:
+                    data_smooth[i][y_name] = self._savitzky_golay(data_smooth[i][y_name], 21, 3)
+                data_stat = pd.concat(data_smooth.values())
+
             if c:
                 plot = self._plot_colorscale(plot)
             
@@ -1839,6 +1854,223 @@ class Plotter():
 
         return plot
 
+    def contribution(self, x: str, c: str, c_map: dict=None, bins: int=256, smooth: bool=False) -> p9.ggplot:
+        """
+        Creates a ggplot dotplot object with the correct data and axis. This plot corrects for donor abundance.
+            :param x: the x dimension
+            :param c: the color dimension; the multiple dimensions will be added together and form together 100%
+            :param c_map: (optional) uses the c_map to map the c-levels
+            :param bins: the number of bins per dimension
+            :param smooth: whether to apply Savitzky-Golay smoothing on the average curves
+        """
+        self._plot_check(self.data, x, y=None, color=c, fill=None)
+
+        if c is not None:
+            if pd.api.types.is_categorical_dtype(self.data[c]) or pd.api.types.is_string_dtype(self.data[c]) or pd.api.types.is_bool_dtype(self.data[c]):
+                #categorical
+                pass
+            else:
+                raise ValueError(f"c '{c}' must be a categorical dtype")
+
+        params = pd.Series([x, c,"__sample"]).dropna().unique()
+        data: pd.DataFrame = self.data[params].copy()
+        categories = pd.Series(data[c].unique())
+        if c_map:
+            if not categories.isin(c_map.keys()).all():
+                raise ValueError(f"c_map must contain all levels of '{c}'")
+            categories = list(c_map.keys())
+
+        # mask the data
+        if self.mask is not None:
+            if self.mask_type != "remove":
+                raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
+            data = data.loc[~self.mask]
+
+        # Group by sample
+        data_sample = {a:b[[x, c]] for a, b in data.groupby(data["__sample"].astype("category"))}
+
+        # Calculate bins
+        try:
+            trans_x = self.transforms[x]
+        except KeyError:
+            raise KeyError(f"no transform available for '{x}', unknown local limits") from None
+        bins_x = np.linspace(trans_x.l_start, trans_x.l_end, num=bins+1, endpoint=True)
+        bins_x = list(bins_x)
+        bin_size = (trans_x.l_end - trans_x.l_start) / bins
+        bin_size *= 0.5
+        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end - bin_size, num=bins, endpoint=False)
+        bins_x_names = list(bins_x_names)
+
+        # Per sample
+        x_min = trans_x.l_end
+        x_max = trans_x.l_start
+        for i_key in data_sample:
+            i_data = data_sample[i_key]
+
+            # Add bins
+            i_data["__x"] = pd.cut(
+                i_data[x], 
+                bins_x,
+                labels=bins_x_names,
+                ordered=False, 
+                include_lowest=True
+            )
+
+            # Store range
+            i_range = i_data["__x"].astype("float")
+            if float(i_range.min()) < x_min:
+                x_min = i_range.min()
+            if float(i_range.max()) > x_max:
+                x_max = i_range.max()
+
+            # Calculate fraq / bin
+            output = pd.DataFrame(np.nan, index=bins_x_names, columns=categories, dtype="float")
+            output.sort_index(inplace=True)
+            for j_key, j_data in i_data.groupby(by="__x"):
+                # Minimum event filter
+                if len(j_data.index) < 5:
+                    continue
+
+                total = j_data[c].count()
+                cats = j_data[c].value_counts()
+                cats = cats / total
+                
+                output.loc[j_key] = cats
+                output.loc[j_key].fillna(0.0, inplace=True)
+
+            # Remove all rows that didnt pass the minimum event filter
+            output = output.loc[~pd.isnull(output.iloc[:,0])]
+            output["__x"] = output.index
+            output["__sample"] = i_key
+
+            data_sample[i_key] = output
+
+        data_bins = pd.concat(data_sample.values(), ignore_index=True)
+
+        # Now calculate average curves using linear interpolation to cross-gaps
+        x_axis = bins_x_names[bins_x_names.index(x_min):bins_x_names.index(x_max)+1]
+
+        curves = {}
+        for cat in categories:
+            curve = data_bins[["__sample", "__x", cat]]
+
+            curve_interp = {}
+            for sample, curve_sample in curve.groupby("__sample"):
+                curve_interp[sample] = np.interp(x_axis, curve_sample["__x"], curve_sample[cat])
+
+            curve_interp = pd.DataFrame(curve_interp, index=x_axis)
+            curve_interp = curve_interp.mean(axis=1)
+            #curve_interp["__x"] = curve_interp.index
+            #curve_interp["__x"] = curve_interp["__x"].astype("float")
+
+            # smoothing here
+            if smooth:
+                curve_interp = self._savitzky_golay(curve_interp, 21, 3)
+
+            curves[cat] = curve_interp
+
+        curves = pd.DataFrame(curves, index=x_axis)
+        curves["__x"] = curves.index.astype("float")
+        curves.reset_index(drop=True, inplace=True)
+
+        # Stack curves
+        for i, cat in enumerate(categories):
+            if i==0:
+                continue
+            curves[cat] += curves[categories[i-1]]
+
+        # Build polygons
+        polygon = curves.shift(periods=1, axis=1, fill_value=0.0)
+        polygon["__x"] = curves["__x"]
+        polygon = polygon.reindex(index=polygon.index[::-1])
+        polygon.reset_index(drop=True, inplace=True)
+        polygon = pd.concat([curves, polygon], ignore_index=True)
+
+        # Build plot base
+        plot = p9.ggplot(
+            data=curves,
+            mapping=p9.aes("__x")
+        )
+
+        plot = self._plot_theme(plot)
+        plot = self._plot_labels(plot, x=x, y=f"Fraction")
+
+        # custom _plot_scale()
+        try:
+            scale_x = self.transforms[x]
+        except KeyError:
+            plot = plot + p9.coords.coord_cartesian()
+        else:
+            plot = plot + p9.scale_x_continuous(
+                breaks=scale_x.major_ticks(),
+                minor_breaks=scale_x.minor_ticks(),
+                labels=scale_x.labels(),
+                expand=(0,0),
+                limits=(scale_x.l_start, scale_x.l_end)
+            )
+
+        plot = plot + p9.scale_y_continuous(
+            expand=(0,0,0.1,0)
+        )
+
+        # plot the line and polygons according to color mapping
+        for i, cat in enumerate(categories):
+            if c_map:
+                plot += p9.geom_path(
+                    #data=curves[cat],
+                    mapping=p9.aes(x="__x", y=cat),
+                    color=c_map[cat],
+                    inherit_aes=False,
+                    size=1.0
+                )
+
+            else:
+                if len(curves.keys()) <= 20:
+                    plot += p9.geom_path(
+                        #data=curves[cat],
+                        mapping=p9.aes(x="__x", y=cat),
+                        color=self.tab20[i],
+                        inherit_aes=False,
+                        size=1.0
+                    )
+                else:
+                    plot += p9.geom_path(
+                        #data=curves[cat],
+                        mapping=p9.aes(x="__x", y=cat),
+                        color="#000000",
+                        inherit_aes=False,
+                        size=1.0
+                    )
+
+            if c_map:
+                plot += p9.geom_polygon(
+                    data = polygon,
+                    mapping=p9.aes(x="__x", y=cat),
+                    #color=c_map[cat],
+                    fill=c_map[cat],
+                    alpha=0.8,
+                    inherit_aes=False
+                )
+            else:
+                if len(data.keys()) <= 20:
+                    plot += p9.geom_polygon(
+                        data = polygon,
+                        mapping=p9.aes(x="__x", y=cat),
+                        #color="#00000000",
+                        fill=self.tab20[i] + "BB",
+                        inherit_aes=False
+                    )
+                else:
+                    plot += p9.geom_polygon(
+                        data = polygon,
+                        mapping=p9.aes(x="__x", y=cat),
+                        #color="#00000000",
+                        fill="#000000BB",
+                        inherit_aes=False
+                    )
+
+        return plot
+
     def show_3d(self, x: str, y: str, z: str, c: str=None, c_stat: str="mean", bins: int=128, c_map: dict=None) -> None:
         """
         Creates a 3dimensional matplotlib figure object with the correct data and axis
@@ -2119,7 +2351,7 @@ class Plotter():
         return lowess
 
     @staticmethod
-    def _savitzky_golay(y: pd.Series, window_size: int, order: int, deriv: int=0, rate: int=1):
+    def _savitzky_golay(y: pd.Series, window_size: int, order: int, deriv: int=0, rate: int=1) -> np.array:
         """Smooth (and optionally differentiate) data with a Savitzky-Golay filter.
         The Savitzky-Golay filter removes high frequency noise from data.
         It has the advantage of preserving the original shape and
@@ -2185,7 +2417,7 @@ class Plotter():
         firstvals = y.iloc[0] - np.abs( y.iloc[1:half_window+1][::-1] - y.iloc[0] )
         lastvals = y.iloc[-1] + np.abs(y.iloc[-half_window-1:-1][::-1] - y.iloc[-1])
         y = np.concatenate((firstvals, y, lastvals))
-        return np.convolve( m[::-1], y, mode='valid')
+        return np.convolve(m[::-1], y, mode='valid')
 
     ## Dimensional reduction
 

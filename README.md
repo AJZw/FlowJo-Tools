@@ -305,7 +305,8 @@ v1.14 - Improved implementation of transformations and rasterization
 v1.15 - Implemented masking  
 v1.16 - Implemented flowjo gate and density overlays  
 v1.17 - Implemented statistics gate nodes  
-v1.18 - Implemented reverse hyperbolic sin & logicle transforms. Updated to pandas 1.3
+v1.18 - Implemented reverse hyperbolic sin & logicle transforms. Updated to pandas 1.3  
+v1.19 - Implemented contribution and improved correlation graphs
 
 ## License
 
