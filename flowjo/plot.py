@@ -196,14 +196,14 @@ class Plotter():
         self._data: pd.DataFrame=None
 
         self.line_color_border: str="#000000"
-        self.line_color_center: str="#FFFFFF"
+        self.line_color_center: str="#ffffff"
         self.linewidth_border: float=4
         self.linewidth_center: float=2
         self.arrow_width_border: float=0.15
         self.arrow_width_center: float=0.13
-        self.color_na: str="#E3256B"
+        self.color_na: str="#e3256b"
         self.color_map: str="magma"
-        self.fill_na: str="#E3256B"
+        self.fill_na: str="#e3256b"
         self.fill_map: str="magma"
         self.is_channel: bool=True
 
@@ -255,7 +255,7 @@ class Plotter():
 
         else:
             raise ValueError("plot must be instantiate with a pd.DataFrame or flowjo.data._Abstract class")
-    
+
     @property
     def data(self) -> pd.DataFrame:
         """
@@ -290,7 +290,7 @@ class Plotter():
 
         if minimum < 0 or maximum > 1023:
             self.is_channel = False
-            print("It looks like the data consists of flowjo scale data. Please set the scaling and axis limits yourself.")
+            print("It looks like the data contains values outside of flowjo channel data. Please set the scaling and axis limits yourself.")
 
     ## abstract plotting functions
     def _plot_check(self, data: pd.Dataframe, x: str, y: str=None, color: str=None, fill: str=None) -> None:
@@ -459,8 +459,8 @@ class Plotter():
             :param x: (optional) overrides the parameter to base the x-transform/scale on
             :param y: (optional) overrides the parameter to base the y-transform/scale on
         """
-        if not self.is_channel:
-            raise ValueError("you cannot use _plot_scale on non-channel data")
+        #if not self.is_channel:
+        #    raise ValueError("you cannot use _plot_scale on non-channel data")
 
         # Fetch scale from self.transforms (if available)
         if xlim is True:
@@ -1277,21 +1277,29 @@ class Plotter():
 
         return plots
 
-    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, smooth: bool=True, min_events: int=4) -> p9.ggplot:
+    def correlation(self, x: str, y: str, c: str="__sample", y_stat: str="mean", summarize: bool=False, bins: int=256, smooth: bool=True, min_events: int=6, x_merge: Tuple[int,int]=None, split: bool=True) -> p9.ggplot:
         """
         Plots a correlation line graph of x versus y. If group is defined, will make a line per level in group
             :param x: the x dimension
             :param y: the y dimension
-            :param c: (optional) which groups to split the data into, and plot separately
+            :param c: which groups to split the data into, and plot separately
             :param y_stat: the condensor the apply to the y dimension, choose from ["max", "min", "sum", "mean", "median", "mode", "var", "std"]
             :param summarize: whether to summarize the data into a mean with standard deviations
             :param bins: the number of bins in the x dimension
             :param smooth: whether to apply savitzky-golay smoothing on the curves
             :param min_events: the minimum amount of events in a bin
+            :param x_merge: (optional) specifies a binning area to consider as one for the purpose of calculating fraction
+            :param split: (optional) whether to only smooth outside the x_merge area
 
         Note: the statistics are calculated on the transformed (=channel) data.
         """
         self._plot_check(self.data, x, y, color=c, fill=None)
+
+        if c is not None:
+            if pd.api.types.is_categorical_dtype(self.data[c]) or pd.api.types.is_string_dtype(self.data[c]) or pd.api.types.is_bool_dtype(self.data[c]):
+                pass
+            else:
+                raise ValueError(f"c '{c}' must be a categorical dtype")
 
         if y_stat not in ["max", "min", "sum", "mean", "median", "mode", "var", "std"]:
             raise ValueError(f"correlation plotting has no implementation for y_stat '{y_stat}'")
@@ -1304,7 +1312,7 @@ class Plotter():
 
         # Get source data of unique params
         params = pd.array([x, y, c]).dropna().unique()
-        data = self.data[params].copy()
+        data: pd.DataFrame = self.data[params].copy()
 
         # mask the data
         if self.mask is not None:
@@ -1317,15 +1325,38 @@ class Plotter():
             trans_x = self.transforms[x]
         except KeyError:
             raise KeyError(f"no transform available for '{x}', unknown local limits") from None
-
-        bins_x = np.linspace(trans_x.l_start, trans_x.l_end, num=bins+1, endpoint=True)
+        bins_x = np.linspace(trans_x.l_start, trans_x.l_end+1, num=bins+1, endpoint=True)
         bins_x = list(bins_x)
-    
-        bin_size = (trans_x.l_end - trans_x.l_start) / bins
+        bin_size = (trans_x.l_end - trans_x.l_start + 1) / bins
         bin_size *= 0.5
-
-        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end - bin_size, num=bins, endpoint=False)
+        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end + bin_size + 1, num=bins, endpoint=False)
         bins_x_names = list(bins_x_names)
+
+        if x_merge:
+            # Cut-out the area provided by x_merge, in case of any overlap the entire bin is joined into the x_merge
+            import bisect
+            i_start = bisect.bisect_right(bins_x, x_merge[0])
+            i_start = 1 if i_start == 0 else i_start
+
+            i_end = bisect.bisect_left(bins_x, x_merge[1])
+            i_end = i_end-1 if i_end > bins else i_end
+
+            # Include half-covered bins
+            x_merge = (bins_x[i_start-1], bins_x[i_end])
+            x_merge_name = ((x_merge[1] - x_merge[0]) / 2) + x_merge[0]
+            
+            new_x = bins_x[:i_start-1]
+            new_x.extend([x_merge[0], x_merge[1]])
+            new_x.extend(bins_x[i_end+1:])
+    
+            new_x_names = bins_x_names[:i_start-1]
+            new_x_names.append(x_merge_name)
+            new_x_names.extend(bins_x_names[i_end:])
+
+            lost_x_names = bins_x_names[i_start-1:i_end]
+
+            bins_x = new_x
+            bins_x_names = new_x_names
 
         data["__x_bin"] = pd.cut(
             data[x], 
@@ -1334,6 +1365,9 @@ class Plotter():
             ordered=False, 
             include_lowest=True
         )
+
+        # Sometimes pd.cut returns a categorical
+        data["__x_bin"] = data["__x_bin"].astype("float64")
 
         # Remove useless x information
         if c is None:
@@ -1349,7 +1383,7 @@ class Plotter():
             if min_events > 1:
                 data_indexed = data_indexed.filter(lambda x: len(x) > min_events)
                 data_indexed = data_indexed.groupby(by=[c, "__x_bin"], axis=0, sort=True, dropna=True)
-        
+
         # calculate stats
         if y_stat == "max":
             y_name = f"__max({y})"
@@ -1380,11 +1414,27 @@ class Plotter():
 
         # Remove multi-index
         data_stat.columns = [y_name]
-
-        data_stat = data_stat.reset_index()
         data_stat = data_stat.loc[~data_stat[y_name].isna()]
+        data_stat = data_stat.reset_index()
 
-        data_stat["__x_bin"] = data_stat["__x_bin"].astype("float64")
+        # Reexpand the merged area
+        if x_merge:
+            bins_x_names = list(np.linspace(trans_x.l_start + bin_size, trans_x.l_end + bin_size + 1, num=bins, endpoint=False))
+
+            merged_i = data_stat.index[data_stat["__x_bin"] == x_merge_name].tolist()
+
+            output = []
+            prev_i = 0
+            for i in merged_i:
+                output.append(data_stat.iloc[prev_i:i])
+                values = data_stat.iloc[i]
+                lost_values = pd.DataFrame([values]*len(lost_x_names))
+                lost_values["__x_bin"] = lost_x_names
+                output.append(lost_values)
+                prev_i = i+1
+            output.append(data_stat.iloc[prev_i:])
+
+            data_stat = pd.concat(output, axis=0, ignore_index=True)           
 
         #########
         # build title
@@ -1403,19 +1453,24 @@ class Plotter():
             # For interpolation
             x_min = data_stat["__x_bin"].min()
             x_max = data_stat["__x_bin"].max()
-
+            
             # Now calculate average curves using linear interpolation to cross-gaps
             x_axis = bins_x_names[bins_x_names.index(x_min):bins_x_names.index(x_max)+1]
 
             curves = {}
             for i, curve in data_stat.groupby(c):              
                 curve_interp = np.interp(x_axis, curve["__x_bin"], curve[y_name])
-
                 curve_interp = pd.DataFrame({"__x_bin":x_axis, y_name:curve_interp, "__sample":i})
+                curve_interp.index = curve_interp["__x_bin"]
 
                 # smoothing here
                 if smooth:
-                    curve_interp[y_name] = self._savitzky_golay(curve_interp[y_name], 21, 3)
+                    import scipy.signal
+                    if x_merge and split:
+                        curve_interp.loc[:x_merge[0], y_name] = scipy.signal.savgol_filter(curve_interp.loc[:x_merge[0], y_name], 21, 3, mode="mirror")
+                        curve_interp.loc[x_merge[1]:, y_name] = scipy.signal.savgol_filter(curve_interp.loc[x_merge[1]:, y_name], 21, 3, mode="mirror")
+                    else:
+                        curve_interp[y_name] = scipy.signal.savgol_filter(curve_interp[y_name], 21, 3, mode="mirror")
 
                 curves[i] = curve_interp
 
@@ -1432,7 +1487,6 @@ class Plotter():
 
             # statistics
             # take statistic before summarisation to have a more relevant R value
-            #r_value, p_value = scipy.stats.pearsonr(data_sum["__x_bin"], data_sum["__mean"])
             r_value, p_value = scipy.stats.pearsonr(data_stat["__x_bin"], data_stat[y_name])
             title += f": r={r_value:.3f}, p={p_value:.4f}"
 
@@ -1498,11 +1552,20 @@ class Plotter():
 
         else:
             if smooth:
-                #print(data_stat)
                 data_smooth = {i:k for i, k in data_stat.groupby(c)}
+                
                 for i in data_smooth:
-                    data_smooth[i][y_name] = self._savitzky_golay(data_smooth[i][y_name], 21, 3)
-                data_stat = pd.concat(data_smooth.values())
+                    import scipy.signal
+                    if x_merge and split:
+                        curve_data = data_smooth[i]
+                        curve_data.index = curve_data["__x_bin"]
+                        curve_data.loc[:x_merge[0], y_name] = scipy.signal.savgol_filter(curve_data.loc[:x_merge[0], y_name], 21, 3, mode="mirror")
+                        curve_data.loc[x_merge[1]:, y_name] = scipy.signal.savgol_filter(curve_data.loc[x_merge[1]:, y_name], 21, 3, mode="mirror")
+                        data_smooth[i] = curve_data  
+
+                    else:
+                        data_smooth[i][y_name] = scipy.signal.savgol_filter(data_smooth[i][y_name], 21, 3, mode="mirror")
+                data_stat = pd.concat(data_smooth.values(), ignore_index=True)
 
             if c:
                 plot = self._plot_colorscale(plot)
@@ -1525,6 +1588,11 @@ class Plotter():
                     mapping=p9.aes(x="__x_bin", y=y_name),
                     inherit_aes=False
                 )
+
+        # visualize merged area
+        if x_merge:
+            plot += p9.geom_vline(xintercept=x_merge[0])
+            plot += p9.geom_vline(xintercept=x_merge[1])
 
         return plot
 
@@ -1737,11 +1805,11 @@ class Plotter():
             trans_x = self.transforms[x]
         except KeyError:
             raise KeyError(f"no transform available for '{x}', unknown local limits") from None
-        bins_x = np.linspace(trans_x.l_start, trans_x.l_end, num=bins+1, endpoint=True)
+        bins_x = np.linspace(trans_x.l_start, trans_x.l_end+1, num=bins+1, endpoint=True)
         bins_x = list(bins_x)
-        bin_size = (trans_x.l_end - trans_x.l_start) / bins
+        bin_size = ((trans_x.l_end+1) - trans_x.l_start) / (bins+1)
         bin_size *= 0.5
-        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end - bin_size, num=bins, endpoint=False)
+        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end + bin_size + 1, num=bins, endpoint=False)
         bins_x_names = list(bins_x_names)
         
         for i_key in data:
@@ -1798,7 +1866,8 @@ class Plotter():
                     mapping=p9.aes(x="__x", y=x),
                     color=c_map[i_key],
                     inherit_aes=False,
-                    size=1.0
+                    size=1.0,
+                    show_legend=True
                 )
 
             else:
@@ -1808,7 +1877,8 @@ class Plotter():
                         mapping=p9.aes(x="__x", y=x),
                         color=self.tab20[i],
                         inherit_aes=False,
-                        size=1.0
+                        size=1.0,
+                        show_legend=True
                     )
                 else:
                     plot += p9.geom_path(
@@ -1816,7 +1886,8 @@ class Plotter():
                         mapping=p9.aes(x="__x", y=x),
                         color="#000000",
                         inherit_aes=False,
-                        size=1.0
+                        size=1.0,
+                        show_legend=True
                     )
 
             poly_start = data[i_key].iloc[0].copy()
@@ -1854,7 +1925,7 @@ class Plotter():
 
         return plot
 
-    def contribution(self, x: str, c: str, c_map: dict=None, bins: int=256, smooth: bool=False) -> p9.ggplot:
+    def contribution(self, x: str, c: str, c_map: dict=None, bins: int=256, smooth: bool=False, min_events: int=6, x_merge: Tuple[int,int]=None, split: bool=True) -> p9.ggplot:
         """
         Creates a ggplot dotplot object with the correct data and axis. This plot corrects for donor abundance.
             :param x: the x dimension
@@ -1862,15 +1933,16 @@ class Plotter():
             :param c_map: (optional) uses the c_map to map the c-levels
             :param bins: the number of bins per dimension
             :param smooth: whether to apply Savitzky-Golay smoothing on the average curves
+            :param min_events: the minimum amount of events in a bin
+            :param x_merge: (optional) specifies a binning area to consider as one for the purpose of calculating fraction
+            :param split: (optional) whether to only smooth outside the x_merge area
         """
         self._plot_check(self.data, x, y=None, color=c, fill=None)
 
-        if c is not None:
-            if pd.api.types.is_categorical_dtype(self.data[c]) or pd.api.types.is_string_dtype(self.data[c]) or pd.api.types.is_bool_dtype(self.data[c]):
-                #categorical
-                pass
-            else:
-                raise ValueError(f"c '{c}' must be a categorical dtype")
+        if pd.api.types.is_categorical_dtype(self.data[c]) or pd.api.types.is_string_dtype(self.data[c]) or pd.api.types.is_bool_dtype(self.data[c]):
+            pass
+        else:
+            raise ValueError(f"c '{c}' must be a categorical dtype")
 
         params = pd.Series([x, c,"__sample"]).dropna().unique()
         data: pd.DataFrame = self.data[params].copy()
@@ -1893,22 +1965,47 @@ class Plotter():
                 raise ValueError(f"rasterized plots only allow for 'remove' mask_type'")
             data = data.loc[~self.mask]
 
-        # Group by sample
-        data_sample = {a:b[[x, c]] for a, b in data.groupby(data["__sample"].astype("category"))}
-
         # Calculate bins
         try:
             trans_x = self.transforms[x]
         except KeyError:
             raise KeyError(f"no transform available for '{x}', unknown local limits") from None
-        bins_x = np.linspace(trans_x.l_start, trans_x.l_end, num=bins+1, endpoint=True)
+        bins_x = np.linspace(trans_x.l_start, trans_x.l_end+1, num=bins+1, endpoint=True)
         bins_x = list(bins_x)
-        bin_size = (trans_x.l_end - trans_x.l_start) / bins
+        bin_size = ((trans_x.l_end+1) - trans_x.l_start) / bins
         bin_size *= 0.5
-        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end - bin_size, num=bins, endpoint=False)
+        bins_x_names = np.linspace(trans_x.l_start + bin_size, trans_x.l_end + bin_size + 1, num=bins, endpoint=False)
         bins_x_names = list(bins_x_names)
 
+        if x_merge:
+            # Cut-out the area provided by x_merge, in case of any overlap the entire bin is joined into the x_merge
+            import bisect
+            i_start = bisect.bisect_right(bins_x, x_merge[0])
+            i_start = 1 if i_start == 0 else i_start
+
+            i_end = bisect.bisect_left(bins_x, x_merge[1])
+            i_end = i_end-1 if i_end > bins else i_end
+
+            # Include half-covered bins
+            x_merge = (bins_x[i_start-1], bins_x[i_end])
+            x_merge_name = ((x_merge[1] - x_merge[0]) / 2) + x_merge[0]
+            
+            new_x = bins_x[:i_start-1]
+            new_x.extend([x_merge[0], x_merge[1]])
+            new_x.extend(bins_x[i_end+1:])
+    
+            new_x_names = bins_x_names[:i_start-1]
+            new_x_names.append(x_merge_name)
+            new_x_names.extend(bins_x_names[i_end:])
+
+            lost_x_names = bins_x_names[i_start-1:i_end]
+
+            bins_x = new_x
+            bins_x_names = new_x_names
+
         # Per sample
+        data_sample = {a:b[[x, c]] for a, b in data.groupby(data["__sample"].astype("category"))}
+
         x_min = trans_x.l_end
         x_max = trans_x.l_start
         for i_key in data_sample:
@@ -1923,12 +2020,15 @@ class Plotter():
                 include_lowest=True
             )
 
+            # Sometimes pd.cut returns a categorical
+            i_data["__x"] = i_data["__x"].astype("float64")
+
             # Calculate fraq / bin
             output = pd.DataFrame(np.nan, index=bins_x_names, columns=categories, dtype="float")
             output.sort_index(inplace=True)
             for j_key, j_data in i_data.groupby(by="__x"):
                 # Minimum event filter
-                if len(j_data.index) < 5:
+                if len(j_data.index) <= min_events:
                     continue
 
                 total = j_data[c].count()
@@ -1943,6 +2043,16 @@ class Plotter():
             output["__x"] = output.index
             output["__sample"] = i_key
 
+            # Expand merged area back to the original bins
+            # to increase weight for linear interpolation and smoothing
+            if x_merge:
+                values = output.loc[x_merge_name]
+                lost_values = pd.DataFrame([values]*len(lost_x_names), index=lost_x_names)
+                lost_values["__x"] = lost_values.index
+
+                output = pd.concat([output, lost_values])
+                output.sort_index(inplace=True)
+
             # Store range
             if float(output["__x"].min()) < x_min:
                 x_min = output["__x"].min()
@@ -1954,6 +2064,10 @@ class Plotter():
         data_bins = pd.concat(data_sample.values(), ignore_index=True)
 
         # Now calculate average curves using linear interpolation to cross-gaps
+        # And restore the bins when we merged before
+        if x_merge:
+            bins_x_names = list(np.linspace(trans_x.l_start + bin_size, trans_x.l_end + bin_size + 1, num=bins, endpoint=False))
+
         x_axis = bins_x_names[bins_x_names.index(x_min):bins_x_names.index(x_max)+1]
 
         curves = {}
@@ -1966,12 +2080,15 @@ class Plotter():
 
             curve_interp = pd.DataFrame(curve_interp, index=x_axis)
             curve_interp = curve_interp.mean(axis=1)
-            #curve_interp["__x"] = curve_interp.index
-            #curve_interp["__x"] = curve_interp["__x"].astype("float")
 
             # smoothing here
             if smooth:
-                curve_interp = self._savitzky_golay(curve_interp, 21, 3)
+                import scipy.signal
+                if x_merge and split:
+                    curve_interp.loc[:x_merge[0]] = scipy.signal.savgol_filter(curve_interp.loc[:x_merge[0]], 21, 3, mode="mirror")
+                    curve_interp.loc[x_merge[1]:] = scipy.signal.savgol_filter(curve_interp.loc[x_merge[1]:], 21, 3, mode="mirror")
+                else:
+                    curve_interp = scipy.signal.savgol_filter(curve_interp, 21, 3, mode="mirror")
 
             curves[cat] = curve_interp
 
@@ -1979,16 +2096,11 @@ class Plotter():
         curves["__x"] = curves.index.astype("float")
         curves.reset_index(drop=True, inplace=True)
 
-        # smoothing can overfit (especially on edges) correct back to 1
-        if smooth:
-            curves[categories] = curves[categories].div(curves[categories].sum(axis=1), axis="index")
-        
         # Stack curves
         for i, cat in enumerate(categories):
             if i==0:
                 continue
             curves[cat] += curves[categories[i-1]]
-
 
         # Build polygons
         polygon = curves.shift(periods=1, axis=1, fill_value=0.0)
@@ -2033,7 +2145,8 @@ class Plotter():
                     mapping=p9.aes(x="__x", y=cat),
                     color=c_map[cat],
                     inherit_aes=False,
-                    size=1.0
+                    size=1.0,
+                    show_legend=True
                 )
 
             else:
@@ -2043,7 +2156,8 @@ class Plotter():
                         mapping=p9.aes(x="__x", y=cat),
                         color=self.tab20[i],
                         inherit_aes=False,
-                        size=1.0
+                        size=1.0,
+                        show_legend=True
                     )
                 else:
                     plot += p9.geom_path(
@@ -2051,7 +2165,8 @@ class Plotter():
                         mapping=p9.aes(x="__x", y=cat),
                         color="#000000",
                         inherit_aes=False,
-                        size=1.0
+                        size=1.0,
+                        show_legend=True
                     )
 
             if c_map:
@@ -2061,7 +2176,7 @@ class Plotter():
                     #color=c_map[cat],
                     fill=c_map[cat],
                     alpha=0.8,
-                    inherit_aes=False
+                    inherit_aes=False                    
                 )
             else:
                 if len(data.keys()) <= 20:
@@ -2080,6 +2195,11 @@ class Plotter():
                         fill="#000000BB",
                         inherit_aes=False
                     )
+
+        # visualize merged area
+        if x_merge:
+            plot += p9.geom_vline(xintercept=x_merge[0])
+            plot += p9.geom_vline(xintercept=x_merge[1])
 
         return plot
 
@@ -2361,75 +2481,6 @@ class Plotter():
         lowess.drop_duplicates(inplace=True)
 
         return lowess
-
-    @staticmethod
-    def _savitzky_golay(y: pd.Series, window_size: int, order: int, deriv: int=0, rate: int=1) -> np.array:
-        """Smooth (and optionally differentiate) data with a Savitzky-Golay filter.
-        The Savitzky-Golay filter removes high frequency noise from data.
-        It has the advantage of preserving the original shape and
-        features of the signal better than other types of filtering
-        approaches, such as moving averages techniques.
-        Parameters
-        ----------
-        :param y: the values of the time history of the signal.
-        :param window_size: the length of the window. Must be an odd integer number.
-        :param order: the order of the polynomial used in the filtering. Must be less then `window_size` - 1.
-        :param deriv: the order of the derivative to compute (default = 0 means only smoothing)
-        
-        Returns
-        -------
-        ys : ndarray, shape (N)
-            the smoothed signal (or it's n-th derivative).
-        Notes
-        -----
-        The Savitzky-Golay is a type of low-pass filter, particularly
-        suited for smoothing noisy data. The main idea behind this
-        approach is to make for each point a least-square fit with a
-        polynomial of high order over a odd-sized window centered at
-        the point.
-        Examples
-        --------
-        t = np.linspace(-4, 4, 500)
-        y = np.exp( -t**2 ) + np.random.normal(0, 0.05, t.shape)
-        ysg = savitzky_golay(y, window_size=31, order=4)
-        import matplotlib.pyplot as plt
-        plt.plot(t, y, label='Noisy signal')
-        plt.plot(t, np.exp(-t**2), 'k', lw=1.5, label='Original signal')
-        plt.plot(t, ysg, 'r', label='Filtered signal')
-        plt.legend()
-        plt.show()
-        References
-        ----------
-        .. [1] A. Savitzky, M. J. E. Golay, Smoothing and Differentiation of
-        Data by Simplified Least Squares Procedures. Analytical
-        Chemistry, 1964, 36 (8), pp 1627-1639.
-        .. [2] Numerical Recipes 3rd Edition: The Art of Scientific Computing
-        W.H. Press, S.A. Teukolsky, W.T. Vetterling, B.P. Flannery
-        Cambridge University Press ISBN-13: 9780521880688
-        """
-        import numpy as np
-        from math import factorial
-        
-        try:
-            window_size = np.abs(np.int(window_size))
-            order = np.abs(np.int(order))
-        except ValueError:
-            raise ValueError("window_size and order have to be of type int")
-        if window_size % 2 != 1 or window_size < 1:
-            raise TypeError("window_size size must be a positive odd number")
-        if window_size < order + 2:
-            raise TypeError("window_size is too small for the polynomials order")
-        order_range = range(order+1)
-        half_window = (window_size -1) // 2
-        # precompute coefficients
-        b = np.mat([[k**i for i in order_range] for k in range(-half_window, half_window+1)])
-        m = np.linalg.pinv(b).A[deriv] * rate**deriv * factorial(deriv)
-        # pad the signal at the extremes with
-        # values taken from the signal itself
-        firstvals = y.iloc[0] - np.abs( y.iloc[1:half_window+1][::-1] - y.iloc[0] )
-        lastvals = y.iloc[-1] + np.abs(y.iloc[-half_window-1:-1][::-1] - y.iloc[-1])
-        y = np.concatenate((firstvals, y, lastvals))
-        return np.convolve(m[::-1], y, mode='valid')
 
     ## Dimensional reduction
 

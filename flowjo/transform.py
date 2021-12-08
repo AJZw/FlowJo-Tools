@@ -631,11 +631,9 @@ class BiexGenerator(_AbstractGenerator):
                 decade = 10**i
                 
                 value = 1 * decade
-                if value == 1:
-                    continue
-
-                if value >= start and value <= end:
-                    values.append(value)
+                if value != 1:
+                    if value >= start and value <= end:
+                        values.append(value)
             
                 value = 5 * decade
                 if value >= start and value <= end:
@@ -644,7 +642,7 @@ class BiexGenerator(_AbstractGenerator):
         elif decade_start > decade_end:
             decade_start = int(decade_start) + 1
             decade_end = int(decade_end) - 1
-            decade_end = 0 if decade_end < 0 else decade_end
+            decade_end = -1 if decade_end < 0 else decade_end
 
             # iterate through decades
             for i in range(decade_start, decade_end, -1):
