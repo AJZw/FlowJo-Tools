@@ -1,11 +1,11 @@
 ##############################################################################     ##    ######
 #    A.J. Zwijnenburg                   2020-09-09           v1.0                 #  #      ##
-#    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
+#    Copyright (C) 2023 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2020 AJ Zwijnenburg
+# Copyright (C) 2023 AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -26,16 +26,6 @@ This is the OLD method of moving data from FlowJo to pandas. It is way more conv
 to make use of the Workspace() method (see README.md)
 
 Allows for the exporting of FlowJo data to a gate-annotated pd.DataFrame
-
-:class: _Abstract
-Abstract FlowJo Data file, use for further subclassing
-Implement here functions that do not depends on how-to-parse the data
-
-:class: CSV
-Data class for basic flowjo fcs export in csv format
-
-:class: CSVData
-Data class for parsing a FlowJo fcs data with sample/gate annotation.
 
 For this to work follow the follow protocol:
 
@@ -113,17 +103,23 @@ Step-by-step walkthrough
 from __future__ import annotations
 from typing import List
 
-import pandas as pd
-import numpy as np
-import os
 import itertools
+import os
 import warnings
+
+import numpy as np
+import pandas as pd
 
 class _Abstract():
     """
     Abstract data class provides the interface for a flowjo.data type.
     For new data types inherit this class
-        :param path: path to the data to import
+
+    Args:
+        path: path to the data to import
+
+    Attributes:
+        data: the flow cytometry data
     """
     def __init__(self, path: str=None) -> None:
         self._path: str = None
@@ -136,7 +132,9 @@ class _Abstract():
     def path(self) -> str:
         """
         Getter for path to data file
-            :returns: path to data file
+        
+        Returns:
+            path to data file
         """
         return self._path
 
@@ -144,8 +142,12 @@ class _Abstract():
     def path(self, path: str) -> None:
         """
         Setter for the data file path. Will parse the data.
-            :param path: path to data file
-            :raises ValueError: is file doesnt exist
+
+        Args:
+            path: path to data file
+        
+        Raises:
+            ValueError: is file doesnt exist
         """
         if not os.path.isfile(path):
             raise ValueError(f"path '{path}' doesnt point to a valid file")
@@ -157,14 +159,21 @@ class _Abstract():
     def parse(self) -> None:
         """
         Parses the file in .path into .data
-            :raises NotImplementedError:
+
+        Raises:
+            NotImplementedError: tbd in inherited class
         """
         raise NotImplementedError("implement in inherited class")
 
     def save(self, path) -> None:
         """
         Saves the data file in csv format (encoded 'utf-8') to path
-            :raises ValueError: if path cannot be used for saving
+
+        Args:
+            path: save path
+
+        Raises:
+            ValueError: if path cannot be used for saving
         """
         if self.data is None:
             raise ValueError(".data attribute doesnt contain any data")
@@ -187,8 +196,12 @@ class _Abstract():
     def load(self, path) -> None:
         """
         Loads a previously saved data file from csv format into the class.
-            :param path: path to file to load
-            :raises ValueError: if file cannot be loaded
+
+        Args:
+            path: path to file to load
+
+        Raises:
+            ValueError: if file cannot be loaded
         """
         if not os.path.isfile(path):
             raise ValueError(f"path '{path}' does not point to a file")
@@ -216,7 +229,13 @@ class CSV(_Abstract):
 class CSVGated(_Abstract):
     """
     Class representing a gate annotated exported FlowJo (csv) files
-        :param directory: path to the directory containing the exported FlowJo Files
+
+    Args:
+        directory: path to the directory containing the exported FlowJo Files
+
+    Attributes:
+        name_map: mapping of name annotations
+        gate_map: mapping of gate hierarchy
     """
     def __init__(self, directory: str = None) -> None:
         super().__init__(None)
@@ -242,7 +261,9 @@ class CSVGated(_Abstract):
         """
         This class is special and doesnt have .path. It has a .directory.
         .path is only available when this class is used with .load()
-            :raises NotImplementedError:
+        
+        Raises:
+            NotImplementedError
         """
         if not self.path:
             raise NotImplementedError("CSVGated object uses .directory not .path")
@@ -253,7 +274,9 @@ class CSVGated(_Abstract):
     def path(self, path: str) -> None:
         """
         This class is special and doesnt have .path. It has a .directory.
-            :raises NotImplementedError:
+        
+        Raises:
+            NotImplementedError:
         """
         raise NotImplementedError("CSVGated object uses .directory not .path")
 
@@ -261,6 +284,9 @@ class CSVGated(_Abstract):
     def directory(self) -> str:
         """
         Getter for directory
+
+        Returns:
+            directory
         """
         return self._directory
     
@@ -268,8 +294,12 @@ class CSVGated(_Abstract):
     def directory(self, directory: str) -> None:
         """
         Setter for directory. If new directory is invalid; reverts to old directory
-            :param directory: path to the flowjo exported csv files
-            :raises ValueError: if directory is invalid
+        
+        Args:
+            directory: path to the flowjo exported csv files
+        
+        Raises:
+            ValueError: if directory is invalid
         """
         old_directory = self._directory
 
@@ -284,15 +314,22 @@ class CSVGated(_Abstract):
     def name_setup(self) -> str:
         """
         Getter for name_setup filepath
+
+        Returns:
+            the name_setup filepath
         """
         return self._name_setup
 
     @name_setup.setter
     def name_setup(self, path: str) -> None:
         """
-        Setter for name_setup filepath. Exception safe
-            :param path: the path to name_setup.txt
-            :raises ValueError: if path doesnt point to a name_setup file
+        Setter for name_setup filepath. Exception safe.
+
+        Args:
+            path: the path to name_setup.txt
+
+        Raises:
+            ValueError: if path doesnt point to a name_setup file
         """
         if not os.path.isfile(path):
             raise ValueError(f"file '{path}' does not exist")
@@ -311,6 +348,9 @@ class CSVGated(_Abstract):
     def gate_setup(self) -> str:
         """
         Getter for gate_setup filepath
+        
+        Returns:
+            gate_setup filepath
         """
         return self._gate_setup
 
@@ -318,8 +358,12 @@ class CSVGated(_Abstract):
     def gate_setup(self, path: str) -> None:
         """
         Setter for gate_setup filepath. Exception safe
-            :param path: the path to gate_setup.txt
-            :raises ValueError: if path doesnt point to a gate_setup file
+
+        Args:
+            path: the path to gate_setup.txt
+
+        Raises:
+            ValueError: if path doesnt point to a gate_setup file
         """
         if not os.path.isfile(path):
             raise ValueError(f"file '{path}' does not exist")
@@ -337,7 +381,9 @@ class CSVGated(_Abstract):
     def parse(self) -> None:
         """
         Parses the directory data into .data
-            :raises ValueError: if parsing/collapsing/annotating failes at any point
+
+        Raises:
+            ValueError: if parsing/collapsing/annotating failes at any point
         """
         data = self._load_data()
         data = self._collapse_data(data)
@@ -355,9 +401,12 @@ class CSVGated(_Abstract):
     def _check_data(self) -> None:
         """
         Not implemented, if you feel like it yourself, go ahead
-        Checks the validity of the data.csv fil"]e
-            :raises ValueError: if data file is invalid
+        Checks the validity of the data.csv file
+
+        Raises:
+            NotImplementedError:
         """
+        raise NotImplementedError
         # Check if all data files have the same amount of columns
         # Check if data file name holds enough section for all nodes & name_meta
         data_ncol: int = 0
@@ -376,6 +425,9 @@ class CSVGated(_Abstract):
         Checks the flowjo directory for the necessary files. 
         Assumes all csv / txt files in this directory are to be used.
         Exception safe
+
+        Raises:
+            ValueError: if self.directory points to invalid directory
         """
         if not os.path.isdir(self.directory):
             raise ValueError(f"path '{self.directory}' does not point to a valid directory")
@@ -415,7 +467,9 @@ class CSVGated(_Abstract):
         """
         Loads and parses the gate setup from the gate_setup path.
         Constructs a node to metadata lookup table. Exception safe
-            :raises ValueError: if parsing failes
+
+        Raises:
+            ValueError: if parsing failes
         """
         if not self._gate_setup:
             raise ValueError("no gate_setup.txt defined, please add path using the .gate_setup attribute")
@@ -434,7 +488,9 @@ class CSVGated(_Abstract):
     def _load_name_setup(self) -> None:
         """
         Loads the name_setup and parses it to map the name specifiers
-            :raises ValueError: if parsing failes
+
+        Raises:
+            ValueError: if parsing failes
         """
         if not self._name_setup:
             raise ValueError("no name_setup.txt defined, please add path using the .name_setup attribute")
@@ -450,8 +506,12 @@ class CSVGated(_Abstract):
         """
         Loads all samples and binds them into one big data.frame. At the same time adds the sample meta data information
         Also tries to add an unique identifyer to cells
-            :returns: a dataframe of all files bound together. This will cotnain duplicates
-            :raises ValueError: if loading failes
+
+        Returns:
+            a dataframe of all files bound together. This will contain duplicates
+
+        Raises:
+            ValueError: if loading failes
         """
         if not self._data_files:
             raise ValueError("no data to load, please use the .directory attribute to set the directory to get the data from")
@@ -522,8 +582,13 @@ class CSVGated(_Abstract):
     def _collapse_data(self, data: pd.DataFrame, sort: bool=False) -> pd.DataFrame:
         """
         Adds gate node metadata and collapses duplicates into one event using the index parameter
-           :param data: all samples rbind together (see _load_data)
-           :param sort: whether to perform a sort before collapsing, probably not necessary and very slow, turn it on when the function requests it
+
+        Args:
+           data: all samples rbind together (see _load_data)
+           sort: whether to perform a sort before collapsing, probably not necessary and very slow, turn it on when the function requests it
+
+        Returns:
+            a dataframe with duplicates removed
         """
         # gate identifyer
         gate_names = pd.concat(self.gate_map)["node"]
@@ -609,7 +674,12 @@ class CSVGated(_Abstract):
         collapse_samples just gives a 'has-this-annotation' TRUE/FALSE output, often gates represent a factorized input
         this function collapses those gates together as a factor of one property. 
         If events are part of multiple factors, it randomly distributes them to one or the other
-            :param data: data collapsed DataFrame
+
+        Args:
+            data: data collapsed DataFrame
+
+        Returns:
+            data with gate collapsed
         """
         # All gates/nodes
         meta_gate = pd.concat(self.gate_map)
@@ -664,8 +734,15 @@ class CSVGated(_Abstract):
         Resolves all possible gate names. Generates a lookup DataFrame for all possible gate names. Gate nodes will be read from 
         the input gates DataFrame. (Grand)parent nodes can be written as *. In that case all possible combinations will be made.
         Fully declared (no wildcard) gates have priority. Any wildcard drops that priority.
-            :param gates: node + label, wildcard is allowed (*), any wildcard cancels priority
-            :raises ValueError: if gate resolving/parsing failes
+
+        Args:
+            gates: node + label, wildcard is allowed (*), any wildcard cancels priority
+
+        Raises:
+            ValueError: if gate resolving/parsing failes
+
+        Returns:
+            gates with wildcard expanded
         """
         # Get max nest_level
         gates["node_level"] = gates["node"].apply(lambda x: x.count("#"))
@@ -707,7 +784,7 @@ class CSVGated(_Abstract):
                 # Check if node duplicate
                 if temp[previous_node]["node"] == node_level.iloc[node]["node"]:
                     if not temp[previous_node]["expanded"] and not node_level.iloc[node]["expanded"]:
-                        # Check if noth are not expanded
+                        # Check if node are not expanded
                         raise ValueError("two identical non-expanded gates. Did you define a gate twice?")
                     elif not temp[previous_node]["expanded"]:
                         # Previous one is not expanded, so keep it
@@ -730,7 +807,12 @@ class CSVGated(_Abstract):
     def _annotate_single_gates(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Changes the single node information into name labels
-            :param data: the gate (non grouped) annotated data
+        
+        Args:
+            data: the gate (non grouped) annotated data
+
+        Returns:
+            dataframe annotated with name labels
         """
         gate_labels = pd.concat(self.gate_map)
         gate_labels.index = gate_labels["node"]
@@ -748,7 +830,12 @@ class CSVGated(_Abstract):
     def _annotate_group_gates(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Changes the grouped node information into the name labels
-            :param data: the gate (grouped) annotated data
+
+        Args:
+            data: the gate (grouped) annotated data
+
+        Returns:
+            dataframe with annotated group gates
         """
         gate_labels = pd.concat(self.gate_map)
         gate_labels.index = gate_labels["node"]
@@ -764,9 +851,16 @@ class CSVGated(_Abstract):
     def _parse_gates(gate: pd.Series, tree_nodes: List[pd.DataFrame]=[]) -> pd.DataFrame:
         """
         Takes one gate and generates all possible gates
-            :param gate: the gate to parse
-            :param tree_nodes: the lower nodes ((grand)parent etc)
-            :raises ValueError: if gate parsing failed
+
+        Args:
+            gate: the gate to parse
+            tree_nodes: the lower nodes ((grand)parent etc)
+
+        Raises:
+            ValueError: if gate parsing failed
+
+        Returns:
+            Expanded gates
         """
         gate_nodes = gate["node"].split("#")
         
@@ -813,8 +907,13 @@ class CSVGated(_Abstract):
         """
         Tries to generate a unique identifyer for a cell. This is done by combining different
         parameters into one. This effectively creates an (almost) unique hash
-            :param dataframe: input data
-            :param data_file: file name, used for more precise error messages
+
+        Args:
+            dataframe: input data
+            data_file: file name, used for more precise error messages
+
+        Returns:
+            dataframe with 'unique' identifiers
         """
         dataframe["__index"] = dataframe.apply(lambda x: "_".join(x.astype(str)), axis="columns")
         

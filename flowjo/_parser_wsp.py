@@ -1,11 +1,11 @@
 ##############################################################################     ##    ######
 #    A.J. Zwijnenburg                   2021-03-08           v1.8                 #  #      ##
-#    Copyright (C) 2021 - AJ Zwijnenburg          GPLv3 license                  ######   ##
+#    Copyright (C) 2023 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2021 - AJ Zwijnenburg
+# Copyright (C) 2023 - AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,10 +22,10 @@
 ##############################################################################
 
 """
-Allows for reading of FlowJo workspace (.wsp) files. These functions directly 
-parse the FlowJo wsp XML files into storage classes. These classes are not ment
-for direct usage as they represent the xml version very closely. Use the
-wsp Module as the interface. 
+Reads FlowJo workspace (.wsp) files. The workspace information is directly
+parsed from the FlowJo wsp/XML files into storage classes. These objects are
+not ment for direct usage as they represent the xml version very closely. Use
+the wsp Module as interface.
 
 Flow Cytometry data has to be handled in the following order:
 Get Channel data - raw data as stored in the fcs file
@@ -36,144 +36,46 @@ Apply transformations - linear/log/biexponential/etc transforms into a integer r
     This is called Channel data by FlowJo!
 Apply gating - apply the gates to the transformated data
 
-:class: Gate
-A class representing a gate node
-.id         - the gate id
-.name       - the gate name
-.annotation - the gate annotation
-.owning_group - the group that owns this gate
-.count      - the amount of cells in the gate
-.gates      - the sub gate nodes indexed by gate id
-.boolean    - boolean transform specifyer ["not"]
-.dependents - the depending gates the boolean depends on
-.x          - the gate x-dimension
-.y          - the gate y-dimension
-
-:class: Stat
-A class representing a statistics node
-.name       - the statistics name
-.annotation - the statistics annotation
-.owning_group - the group that owns this statistics
-.value      - the calculated statistic
-.ancestor   - (optional) the ancestor used for statistic calculation
-.id         - (optional) the parameter the statistic is calculated on
-.percent    - (optional) the percentile the percentile statistic is calculated on
-
-:class: _AbstractGating
-An abstract class providing basic gate type properties (like rectangle, ellipse, polygon gates etc)
-.space      - specifyer whether this gate is specified in 'scale' or 'channel' data, 
-    this purely cosmetic, it doesnt change the handling of the data
-.user_defined - whether the gate was defined by the user
-.contains_events - whether the gate contains any events
-.annotation_offset_x - the x-offset of the gate name annotation
-.annotation_offset_y - the y-offset of the gate name annotation
-.tint       - the fill color of the gate
-.is_tinted  - whether the gate is tinted
-.line_weight - the thickness of the gate border
-.contains() - whether specific point in the specified data, fits in the gate with the specified transformations
-.polygon()  - build the gate outline in the shape of a polygon adhering to the x/y transformation
-
-:class: _RectangleGating
-A representation of a rectangle gate. This includes Square, Quad, and Range gates.
-(see _AbstractGating for attributes and functions)
-
-:class: _PolygonGating
-A representation of a polygon gate.
-(see _AbstractGating for attributes and functions)
-
-:class: _EllipsoidGating
-A representation of a ellipsoid gate.
-(see _AbstractGating for attributes and functions)
-
-:class: Cytometer
-A representation of a cytometer
-.name       - the cytometer name
-.cyt        - the cytometer as specified in $CYT keyword
-.manufacturer - the manifacturer
-.homepage   - the FlowJo webpage of the cytometer
-.icon       - the icon FlowJo uses with this cytometer
-.serial_number - the serial number of the flow cytometer
-.use_fcs3   - DEFAULT setting for parsing of data with the cytometer; whether to use fcs3 (if not, uses fcs2)
-.use_biex_transform - DEFAULT setting for parsing of data with the cytometer; whether by default biexponential transform is used
-.transform_type - DEFAULT setting for parsing of data with the cytometer; the default transformation of the data
-.use_gain   - Likely whether gain amplification is used (like with avalanche detectors)
-.linear_rescale - whether linear parameters are scaled according to user specified parameters
-.linear_from_keyword - whether the linear transformation is acquired from the fcs keywords
-.linear_minimum - the minimum value on a linear scale
-.linear_maximum - the maximum value on a linear scale
-.log_rescale - whether log parameters are scaled according to user specified parameters
-.log_from_keyword - whether the log transformation is acquired from the fcs keywords
-.log_minimum - the minimum value on a log scale
-.log_maximum - the maximum value on a log scale
-.biex_extra_negs - the default extra negative decades for biexponential transformations
-.biex_width_basis - the default width basis for biexponential transformations
-.always_linear - the always linear parameters
-.always_log - the always log parameters
-.transforms - the default transformation for any parameter
-
-:class: Group
-A representation of a group
-.name       - the name of a group
-.annotation - the annotation of a group
-.owning_group - the group owner
-.samples    - the sample id's belonging to this group
-.gates      - the group-owned gates
-
-:class: Sample
-A representation of a sample
-.id         - the sample id
-.name       - the sample name
-.path       - the sample path to fcs file
-.owning_group - the group that owns this sample
-.annotation - annotation
-.count      - the amount of cells in this sample
-
-.compensation - the compensation matrix applied to this sample
-.transforms - the transformation applied to each parameter of this sample
-.keywords   - the keywords (and values) of this sample
-.gates      - the gates applied to this sample
-
-:class: Parser
-The main parser of a workspace (.wsp) file
-.name       - the name of the workspace
-.version    - the wsp XML version (I think, not sure, its 20.0 when I am writing this :P )
-.flowjo_version - the FlowJo version
-.modified_data - whether the data is modified
-
-.keywords   - the user-specified keywords
-.matrices   - the compensation matrixes included in the wsp
-.cytometers - the cytometers included in the wsp
-.groups     - the groups included in the wsp
-.samples    - the samples included in the wsp
-
-.path       - the path to the workspace file
-.parse()    - parsers the workspace data
-
+Attributes:
+    CHANNEL_MIN: FlowJo's minimum channel value
+    CHANNEL_MAX: FlowJo's maximum channel value
 """
 
 from __future__ import annotations
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
+
+import os
+import copy
 
 from lxml import etree
-
-from .transform import _Abstract as _AbstractTransform, Linear as LinearTransform, Biex as BiexTransform, Log10 as Log10Transform
-from .transform import Fasinh as FasinhTransform, Hyperlog as HyperlogTransform, Logicle as LogicleTransform
-from .matrix import MTX
-
 import matplotlib.path as mpl_path
-import pandas as pd
 import numpy as np
-import copy
-import os
+import pandas as pd
 
-# Constant Globals defining the Channel data range
-CHANNEL_MIN = 0
-CHANNEL_MAX = 1023
+from .matrix import MTX
+from .transform import _Abstract as _AbstractTransform
+from .transform import Biex as BiexTransform
+from .transform import Fasinh as FasinhTransform
+from .transform import Hyperlog as HyperlogTransform
+from .transform import Linear as LinearTransform 
+from .transform import Log10 as Log10Transform
+from .transform import Logicle as LogicleTransform
+
+CHANNEL_MIN: int = 0
+CHANNEL_MAX: int = 1023
 
 class AbstractGate:
     """
     Abstract representation of a gate node
-        :param element: the gate node element
+
+    Args:
+        element: gate node element
+
+    Attributes:
+        name: gate name
+        annotation: Unknown/Unused in gate nodes
+        owning_group: Unknown/Unused in gate nodes
+        gates: the child gate nodes, indexed on gate id
     """
     def __init__(self, element: etree._Element) -> None:
         self.name: str = None
@@ -187,7 +89,12 @@ class AbstractGate:
     def _parse(self, element: etree._Element) -> None:
         """
         Parses all abstract gate properties
-            :param element: a gate node element
+
+        Args:
+            element: a gate node element
+
+        Raises:
+            NotImplementedError: when encountering an unimplemented gate node type
         """
         self.name = element.attrib["name"]
         self.annotation = element.attrib["annotation"]
@@ -225,12 +132,25 @@ class AbstractGate:
 class Gate(AbstractGate):
     """
     A representation of a node / 'Population' element
-        :param element: the Population element
+
+    Args:
+        element: the Population element
+
+    Attributes:
+        id: the gate id
+        parent_id: the parent node gate id
+        name: the gate name
+        annotation: the gate annotation
+        owning_group: the group that owns this gate
+        count: the number of events in the gate
+        gates: the sub gate nodes indexed by gate id
+        x: the gate x-dimension
+        y: the gate y-dimension
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
         self.id: str = None
-        self.parent_id: str = None
+        self.parent_id: Optional[str] = None
 
         self.count: int = None
 
@@ -241,21 +161,32 @@ class Gate(AbstractGate):
     @property
     def x(self) -> str:
         """
-        y dimension ID
+        Getter of the x dimension ID
+
+        Returns:
+            the x dimension ID
         """
         return self._gating.dimension_x
 
     @property
     def y(self) -> str:
         """
-        y dimension ID
+        Getter of the y dimension ID
+
+        Returns:
+            the y dimension ID
         """
         return self._gating.dimension_y
 
     def _parse(self, element: etree._Element) -> None:
         """
         Parses all abstract gate properties
-            :param element: 'Population' element or boolean node elements
+
+        Args:
+            element: 'Population' element or boolean node elements
+
+        Raises:
+            NotImplementedError: for unimplemented gating types
         """
         self.count = int(element.attrib["count"])
 
@@ -291,7 +222,12 @@ class Gate(AbstractGate):
 class NotGate(Gate):
     """
     A representation of a not node / 'NotNode' element
-        :param element: the NotNode element
+    
+    Args:
+        element: the NotNode element
+
+    Attributes:
+        dependents: list of gate id's this NotGate depends on
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
@@ -302,7 +238,9 @@ class NotGate(Gate):
     def _parse(self, element: etree._Element) -> None:
         """
         Parses all abstract gate properties
-            :param element: 'NotNode' element
+        
+        Args:
+            param element: 'NotNode' element
         """
         self.dependents = [element.attrib["name"] for element in element.findall("Dependents/Dependent")]
 
@@ -312,7 +250,13 @@ class NotGate(Gate):
 class OrGate(AbstractGate):
     """
     A representation of a OrGate node
-        :param element: the gate node element
+
+    Args:
+        element: the gate node element
+
+    Attributes:
+        count: the number of events included in this gate
+        dependents: list of gate id's this NotGate depends on
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
@@ -324,7 +268,9 @@ class OrGate(AbstractGate):
     def _parse(self, element: etree._Element) -> None:
         """
         Parses the OrGate properties
-            :param element: a OrGate node element
+
+        Args:
+            element: a OrGate node element
         """
         self.count = int(element.attrib["count"])
         self.dependents = [element.attrib["name"] for element in element.findall("Dependents/Dependent")]
@@ -335,7 +281,13 @@ class OrGate(AbstractGate):
 class AndGate(AbstractGate):
     """
     A representation of a AndGate node
-        :param element: the gate node element
+
+    Args:
+        element: the gate node element
+
+    Attributes:
+        count: the number of events included in this gate
+        dependents: list of gate id's this AndGate depends on
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
@@ -347,7 +299,9 @@ class AndGate(AbstractGate):
     def _parse(self, element: etree._Element) -> None:
         """
         Parses the AndGate properties
-            :param element: a AndGate node element
+            
+        Args:
+            element: a AndGate node element
         """
         self.count = int(element.attrib["count"])
         self.dependents = [element.attrib["name"] for element in element.findall("Dependents/Dependent")]
@@ -358,14 +312,26 @@ class AndGate(AbstractGate):
 class StatGate(AbstractGate):
     """
     A representation of a stat node / 'Statistic' element
+
+    Args:
+        element: a 'Statistics' element
+
+    Attributes:
+        name: the statistics name
+        annotation: the statistics annotation
+        owning_group: the group that owns this statistics
+        value: the calculated statistic
+        ancestor: (optional) the ancestor used for statistic calculation
+        id: (optional) the parameter the statistic is calculated on
+        percent: (optional) the percentile the percentile statistic is calculated on
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
 
         # Statistics type/name dependent values
-        self.ancestor: str = None
-        self.id: str = None
-        self.percent: float = None
+        self.ancestor: Optional[str] = None
+        self.id: Optional[str] = None
+        self.percent: Optional[float] = None
 
         #FlowJo calculated value
         self.value: float = None
@@ -375,7 +341,9 @@ class StatGate(AbstractGate):
     def _parse(self, element: etree._Element) -> None:
         """
         Parses all statistics node properties
-            :param element: 'Statistic' element
+
+        Args:
+            element: 'Statistic' element
         """
         self.ancestor = element.attrib["ancestor"]
         self.value = float(element.attrib["value"])
@@ -403,8 +371,21 @@ class StatGate(AbstractGate):
 
 class _AbstractGating:
     """
-    An abstract gating class. Provides the expected interface
-        :param a gating:....gate element. This depends on the child class
+    An abstract gating class. 
+    Contains the geometric data of a (geometric) gate node
+
+    Args:
+        element: a 'gating' element
+
+    Attributes:
+        space: defines if this gate is specified in 'scale' or 'channel' data. Depends on type of gate
+        user_defined: whether the gate was defined by the user
+        contains_events: whether the gate contains any events
+        annotation_offset_x: the x-offset of the gate name annotation
+        annotation_offset_y: the y-offset of the gate name annotation
+        tint: the fill color of the gate
+        is_tinted: whether the gate is tinted
+        line_weight: the thickness of the gate border
     """
     def __init__(self, element: etree._Element) -> None:
         self.space: str = None
@@ -423,7 +404,9 @@ class _AbstractGating:
     def _parse(self, element: etree._Element) -> None:
         """
         Parses the default gating attributes
-            :param element: the gating: element
+
+        Args:
+            element: the gating element
         """
         self.user_defined = bool(int(element.attrib["userDefined"]))
         self.contains_events = bool(int(element.attrib["eventsInside"]))
@@ -437,27 +420,49 @@ class _AbstractGating:
 
     def contains(self, data: pd.DataFrame, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.Series[bool]:
         """
-        Returns an array defining if a x-y point is contained by the gating (border of the gates is seen as part of the gate)
-        For some gatings x and y need to be transformed first. Therefore the transformations are essential information.
-            :param data: the data containing the x-y dimension in channel format
-            :param transform_x: a transformation object defining the transformation of the x-dimension
-            :param transform_y: a transformation object defining the transformation of the y-dimension
-            :returns: a boolean series. True if contained by/edge of the gate
+        Returns an array defining if a x-y point is contained by the gating. Border of the gates is seen as part of the gate.
+        For some gatings x and y need to be transformed first. Making the transformations essential information.
+        
+        Args:
+            data: the data containing the x-y dimension in channel format
+            transform_x: a transformation object defining the transformation of the x-dimension
+            transform_y: a transformation object defining the transformation of the y-dimension
+
+        Returns:
+            a boolean series. True if contained by the gate
         """
         raise NotImplementedError("to be implemented in inherited class")
 
     def polygon(self, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.DataFrame:
         """
         Returns a polygon path defining the gate border
-            :param transform_x: a transformation object defining the transformation of the x-dimension
-            :param transform_y: a transformation object defining the transformation of the y-dimension
+
+        Args:
+            transform_x: a transformation object defining the transformation of the x-dimension
+            transform_y: a transformation object defining the transformation of the y-dimension
+        
+        Returns:
+            row[n vectors] x col[x,y] dataframe in channel space
         """
         raise NotImplementedError("to be implemented in inherited class")
 
 class _RectangleGating(_AbstractGating):
     """
     A representation of a rectangle gate. This also includes the Square and Quad gate
-        :param element: RectangleGate element.
+
+    Args:
+        element: RectangleGate element.
+
+    Attributes:
+        space: defines if this gate is specified in 'scale' or 'channel' data.
+        percent_x: Unknown
+        percent_y: Unknown
+        dimension_x: x parameter name
+        min_x: the minimum x coordinate of the gate
+        max_x: the maximum x coordinate of the gate
+        dimension_y: y parameter name
+        min_y: the minimum y coordinate of the gate
+        max_y: the maximum y coordinate of the gate
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
@@ -469,16 +474,21 @@ class _RectangleGating(_AbstractGating):
         self.min_x: float = None    # in channel space as parsed from wsp file
         self.max_x: float = None    # in channel space as parsed from wsp file
 
-        self.dimension_y: str = None
-        self.min_y: float = None    # in channel space as parsed from wsp file
-        self.max_y: float = None    # in channel space as parsed from wsp file
+        self.dimension_y: Optional[str] = None
+        self.min_y: Optional[float] = None    # in channel space as parsed from wsp file
+        self.max_y: Optional[float] = None    # in channel space as parsed from wsp file
 
         self._parse(element)
 
     def _parse(self, element: etree._Element) -> None:
         """
         Parses the data of the element
-            :param element: RectangleGate element.
+
+        Args:
+            element: RectangleGate element.
+
+        Raises:
+            NotImplementedError: for >2 dimensional gates
         """
         try:
             self.percent_x = float(element.attrib["percentX"])
@@ -528,12 +538,19 @@ class _RectangleGating(_AbstractGating):
 
     def contains(self, data: pd.DataFrame, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.Series[bool]:
         """
-        Returns an array defining if a x-y point is contained by the gating (border of the gates is excluded of the gate, as does FlowJo)
-        For some gatings x and y need to be transformed first. Therefore the transformations are essential information.
-            :param data: the data containing the x-y dimension in channel format
-            :param transform_x: (optional) a transformation object defining the transformation of the x-dimension
-            :param transform_y: (optional) a transformation object defining the transformation of the y-dimension
-            :returns: a boolean series. True if contained by/edge of the gate
+        Returns an array staing whether an x-y point is contained by the gating (border of the gates is excluded of the gate, as does FlowJo)
+        For rectangle gatings x and y need to be transformed first.
+
+        Args:
+            data: the data containing the x-y dimension in channel format
+            transform_x: (optional) a transformation object defining the transformation of the x-dimension
+            transform_y: (optional) a transformation object defining the transformation of the y-dimension
+        
+        Raises:
+            ValueError: if data does not contain the correct dimensions
+
+        Returns:
+            A Boolean series. True if contained by the gate
         """
         if not (data.columns == self.dimension_x).any():
             raise ValueError(f"data doesnt contain a column for dimension x '{self.dimension_x}'")
@@ -561,12 +578,16 @@ class _RectangleGating(_AbstractGating):
 
         return boolean_result
 
-    def polygon(self, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.DataFrame:
+    def polygon(self, transform_x: _AbstractTransform, transform_y: Optional[_AbstractTransform]) -> pd.DataFrame:
         """
         Returns a polygon path defining the gate border
-            :param transform_x: a transformation object defining the transformation of the x-dimension
-            :param transform_y: (optional) a transformation object defining the transformation of the y-dimension
-            :returns: a one (if transform_y is None) or two dimensional polygon representation of the gate
+
+        Args:
+            transform_x: a transformation object defining the transformation of the x-dimension
+            transform_y: a transformation object defining the transformation of the y-dimension
+        
+        Returns:
+            row[n vectors] x col[x,Optional[y]] dataframe in channel space
         """
         x = [self.min_x, self.max_x, self.max_x, self.min_x, self.min_x]
         channel_x = transform_x.scaler(x)
@@ -602,7 +623,18 @@ class _RectangleGating(_AbstractGating):
 class _PolygonGating(_AbstractGating):
     """
     A representation of a polygon gate. This also includes the MultiSelect and Pencil gates
-        :param element: PolygonGate element.
+
+    Args:
+        element: PolygonGate element.
+
+    Attributes:
+        space: defines if this gate is specified in 'scale' or 'channel' data.
+        quad_id: unknown, likely id to polygon cache
+        gate_resolution: the resolution FlowJo used for gate containment calculations
+        dimension_x: x parameter name
+        dimension_y: y parameter name
+        coordinates_x: the gate vectors x coordinates
+        coordinates_y: the gate vectors y coordinates
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
@@ -621,7 +653,12 @@ class _PolygonGating(_AbstractGating):
     def _parse(self, element: etree._Element) -> None:
         """
         Parses the data of the element
-            :param element: PolygonGate element.
+
+        Args:
+            element: PolygonGate element.
+
+        Raises:
+            NotImplementedError: >2 dimensional gate
         """
         self.quad_id = element.attrib["quadId"]
         self.gate_resolution = int(element.attrib["gateResolution"])
@@ -649,8 +686,13 @@ class _PolygonGating(_AbstractGating):
     def polygon(self, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.DataFrame:
         """
         Returns a polygon path defining the gate border
-            :param transform_x: a transformation object defining the transformation of the x-dimension
-            :param transform_y: a transformation object defining the transformation of the y-dimension
+
+        Args:
+            transform_x: a transformation object defining the transformation of the x-dimension
+            transform_y: a transformation object defining the transformation of the y-dimension
+
+        Returns:
+            A row[n vectors] x col[x,y] dataframe in channel space
         """
         channel_x = copy.deepcopy(self.coordinates_x)
         channel_y = copy.deepcopy(self.coordinates_y)
@@ -665,13 +707,19 @@ class _PolygonGating(_AbstractGating):
 
     def contains(self, data: pd.DataFrame, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.Series[bool]:
         """
-        Returns an array defining if a x-y point is contained by the gating 
-        The border of the gates should be seen as part of the gate, but matplotlib is inconsistent in this optics, so for now this is ignored.
-        For some gatings x and y need to be transformed first. Therefore the transformations are essential information.
-            :param data: the data containing the x-y dimension in channel format
-            :param transform_x: a transformation object defining the transformation of the x-dimension
-            :param transform_y: a transformation object defining the transformation of the y-dimension
-            :returns: a boolean series. True if contained by/edge of the gate
+        Returns an array staing whether an x-y point is contained by the gating (border of the gates is excluded of the gate, as does FlowJo)
+        For rectangle gatings x and y need to be transformed first.
+
+        Args:
+            data: the data containing the x-y dimension in channel format
+            transform_x: (optional) a transformation object defining the transformation of the x-dimension
+            transform_y: (optional) a transformation object defining the transformation of the y-dimension
+        
+        Raises:
+            ValueError: if data does not contain the correct dimensions
+
+        Returns:
+            A Boolean series. True if contained by the gate
         """
         if not (data.columns == self.dimension_x).any():
             raise ValueError(f"data doesnt contain a column for dimension x '{self.dimension_x}'")
@@ -695,7 +743,9 @@ class _PolygonGating(_AbstractGating):
 
 class _EllipsoidGating(_AbstractGating):
     """
-    A representation of an ellips gate.
+    A representation of an ellips gate
+
+    Attributes that describe the polygon:
 
                    v_c
                     |
@@ -703,14 +753,34 @@ class _EllipsoidGating(_AbstractGating):
                     |
                    v_d
 
-        :param element: EllipsoidGate element.
+    Args:
+        element: EllipsoidGate element.
+
+    Attributes:
+        space: defines if this gate is specified in 'scale' or 'channel' data.
+        resolution: the channel resolution flowjo uses to calculate containment
+        distance: the distance between any point on the ellipsoid and the two focal points
+        dimension_x: the name of the x dimension
+        dimension y: the name of the y dimension
+        foci_a_x: focus point a, x coordinate
+        foci_a_y: focus point a, y coordinate
+        foci_b_x: focus point b, x coordinate
+        foci_b_y: focus point b, y coordinate
+        vertex_a_x: vertex point a, x coordinate
+        vertex_a_y: vertex point a, y coordinate
+        vertex_b_x: vertex point b, x coordinate
+        vertex_b_y: vertex point b, y coordinate
+        vertex_c_x: vertex point c, x coordinate
+        vertex_c_y: vertex point c, y coordinate
+        vertex_d_x: vertex point d, x coordinate
+        vertex_d_y: vertex point d, y coordinate
     """
     def __init__(self, element: etree._Element) -> None:
         super().__init__(element)
         self.space = "channel"
-        self.resolution = 256           # The channel resolution of the ellipse gate as stored by FlowJo in wsp
+        self.resolution = 256
 
-        self.distance: float = None     # The distance between any point on the ellips and the two focal points
+        self.distance: float = None
 
         self.dimension_x: str = None
         self.dimension_y: str = None
@@ -734,7 +804,12 @@ class _EllipsoidGating(_AbstractGating):
     def _parse(self, element: etree._Element) -> None:
         """
         Parses the data of the element
-            :param element: PolygonGate element.
+
+        Args:
+            element: PolygonGate element
+
+        Raises:
+            NotImplementedError: If ellipsoid is defined in >2 dimensions
         """
         self.distance = float(element.attrib["{http://www.isac-net.org/std/Gating-ML/v2.0/gating}distance"])
         
@@ -776,12 +851,19 @@ class _EllipsoidGating(_AbstractGating):
 
     def contains(self, data: pd.DataFrame, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.Series[bool]:
         """
-        Returns an array defining if a x-y point is contained by the gating (border of the gates is seen as part of the gate)
-        For some gatings x and y need to be transformed first. Therefore the transformations are essential information.
-            :param data: the data containing the x-y dimension in channel format
-            :param transform_x: a transformation object defining the transformation of the x-dimension - ellipse gate properties are already in channel format
-            :param transform_y: a transformation object defining the transformation of the y-dimension - ellipse gate properties are already in channel format
-            :returns: a boolean series. True if contained by/edge of the gate
+        Returns an array staing whether an x-y point is contained by the gating (border of the gates is excluded of the gate, as does FlowJo)
+        For rectangle gatings x and y need to be transformed first.
+
+        Args:
+            data: the data containing the x-y dimension in channel format
+            transform_x: (optional) a transformation object defining the transformation of the x-dimension
+            transform_y: (optional) a transformation object defining the transformation of the y-dimension
+        
+        Raises:
+            ValueError: if data does not contain the correct dimensions
+
+        Returns:
+            A Boolean series. True if contained by the gate
         """
         # Ellipse have the property that the outer line is always identical distance away from F_A and F_B (=self.distance)
 
@@ -797,6 +879,18 @@ class _EllipsoidGating(_AbstractGating):
         channel_scale_y = (self.resolution / (transform_y.l_end - transform_y.l_start + 1))
 
         def ellipse_contain(data: pd.Series, distance, channel_scale_x, channel_scale_y) -> bool:
+            """
+            If the distance between the to-check point and ellipsoid focuspoints is smaller or equal to the distance 
+            of the focuspoints to the ellipsoid border the point must be contained, and vice versa.
+
+            Args:
+                distance: the distance between the focuspoints and the ellipsoid border
+                channel_scale_x: the x scaling factor
+                channel_scale_y: the y scaling factor
+
+            Returns:
+                Contained?            
+            """
             
             x = data.iloc[0] * channel_scale_x
             y = data.iloc[1] * channel_scale_y
@@ -814,8 +908,13 @@ class _EllipsoidGating(_AbstractGating):
     def polygon(self, transform_x: _AbstractTransform, transform_y: _AbstractTransform) -> pd.DataFrame:
         """
         Returns a polygon path defining the gate border
-            :param transform_x: a transformation object defining the transformation of the x-dimension
-            :param transform_y: a transformation object defining the transformation of the y-dimension
+
+        Args:
+            transform_x: a transformation object defining the transformation of the x-dimension
+            transform_y: a transformation object defining the transformation of the y-dimension
+
+        Returns:
+            A row[n vectors] x col[x,y] dataframe in channel space
         """
         # Thanks stack overflow
         # https://stackoverflow.com/questions/4467121/solutions-for-y-for-a-rotated-ellipse - Dr. belisarius
@@ -863,7 +962,34 @@ class _EllipsoidGating(_AbstractGating):
 class Cytometer():
     """
     A data class representing a cytometer
-        :param element: a 'Cytometer' element from a wsp file
+
+    Args:
+        element: a 'Cytometer' element from a wsp file
+
+    Attributes:
+        name: the cytometer name
+        cyt: the cytometer as specified in $CYT keyword
+        manufacturer: the manifacturer
+        homepage: the FlowJo webpage of the cytometer
+        icon: the icon FlowJo uses with this cytometer
+        serial_number: the serial number of the flow cytometer
+        use_fcs3: DEFAULT setting for parsing of data with the cytometer; whether to use fcs3 (if not, uses fcs2)
+        use_biex_transform: DEFAULT setting for parsing of data with the cytometer; whether by default biexponential transform is used
+        transform_type: DEFAULT setting for parsing of data with the cytometer; the default transformation of the data
+        use_gain: Likely whether gain amplification is used (like with avalanche detectors)
+        linear_rescale: whether linear parameters are scaled according to user specified parameters
+        linear_from_keyword: whether the linear transformation is acquired from the fcs keywords
+        linear_minimum: DEFAULT minimum value on a linear scale
+        linear_maximum: DEFAULT maximum value on a linear scale
+        log_rescale: whether log parameters are scaled according to user specified parameters
+        log_from_keyword: whether the log transformation is acquired from the fcs keywords
+        log_minimum: DEFAULT minimum value on a log scale
+        log_maximum: DEFAULT maximum value on a log scale
+        biex_extra_negs: DEFAULT extra negative decades for biexponential transformations
+        biex_width_basis: DEFAULT width basis for biexponential transformations
+        always_linear: the always linear parameters
+        always_log: the always log parameters
+        transforms: the default transformation for any parameter
     """
     def __init__(self, element: etree._Element):
         # cytometer information
@@ -905,6 +1031,12 @@ class Cytometer():
     def _parse(self, element: etree._Element) -> None:
         """
         Parse the cytometer data
+
+        Args:
+            the cytometer element
+
+        Raises:
+            ValueError: when transformation matrix parsing failes.
         """
         self.name = element.attrib["name"]
         self.cyt = element.attrib["cyt"]
@@ -1015,8 +1147,17 @@ class Cytometer():
 
 class Group():
     """
-    A data class representing a group of samples.
-    With additional gating information
+    A data class representing a group of samples (with gating information)
+
+    Args:
+        element: A group element
+
+    Attributes:
+        name: the name of a group
+        annotation: the annotation of a group
+        owning_group: the group owner
+        samples: the sample id's belonging to this group
+        gates: the group-owned gates
     """
     def __init__(self, element: etree._Element) -> None:
         self.name: str = None
@@ -1031,7 +1172,9 @@ class Group():
     def _parse(self, element):
         """
         Parse the Group data
-            :param element: the 'GroupNode' element
+
+        Args:
+            element: the 'GroupNode' element
         """
         self.name = element.attrib["name"]
         self.annotation = element.attrib["annotation"]
@@ -1057,7 +1200,21 @@ class Group():
 class Sample():
     """
     A container class for a sample embedded in the wsp
-        :param element: the sample xml element
+
+    Args:
+        element: the 'Sample' element
+
+    Attributes:
+        id: the sample id
+        name: the sample name
+        path: the sample path to fcs file
+        owning_group: the group that owns this sample
+        annotation: annotation
+        count: the amount of cells in this sample
+        compensation: the compensation matrix applied to this sample
+        transforms: the transformation applied to each parameter of this sample
+        keywords: the keywords (and values) of this sample
+        gates: the gates applied to this sample
     """
     def __init__(self, element: etree._Element) -> None:
         self.id: str = None
@@ -1077,7 +1234,13 @@ class Sample():
     def _parse(self, element: etree._Element) -> None:
         """
         Parse the sample data
-            :param element: the Sample element
+
+        Args:
+            element: the Sample element
+
+        Raises:
+            ValueError: when transformation cannot be parsed
+            NotImplementedError: when unimplemented gate nodes are encountered
         """
         # Metadata
         dataset = element.find("DataSet")
@@ -1199,7 +1362,21 @@ class Sample():
 class Parser():
     """
     Class for the reading of FlowJo workspace (.wsp) files
-        :param path: path to the workspace file
+
+    Args:
+        path: path to the workspace file
+
+    Attributes:
+        name: the name of the workspace
+        version: the wsp XML version (I think, not sure, its 20.0 when I am writing this :P )
+        flowjo_version: the FlowJo version
+        modified_data: whether the data is modified
+        keywords: the user-specified keywords
+        matrices: the compensation matrixes included in the wsp
+        cytometers: the cytometers included in the wsp
+        groups: the groups included in the wsp
+        samples: the samples included in the wsp
+        path: the path to the workspace file
     """
     def __init__(self, path: str=None):
         self._path: str = None
@@ -1226,6 +1403,9 @@ class Parser():
     def path(self) -> str:
         """
         Getter for the workspace path
+        
+        Returns:
+            workspace path
         """
         return self._path
 
@@ -1233,7 +1413,12 @@ class Parser():
     def path(self, path: str) -> None:
         """
         Setter for the workspace path
-            :raises ValueError: if path cannot be found
+
+        Args:
+            path: the path a wsp file
+        
+        Raises:
+            ValueError: if path cannot be found or doesnt point to a wsp file
         """
         path = os.path.join(path)
 
@@ -1251,6 +1436,9 @@ class Parser():
     def parse(self) -> None:
         """
         Parses the workspace data
+        
+        Raises:
+            ValueError: if self.path is not a proper xml file
         """
         with open(self.path, mode='rb') as xml_file:
             xml_data = xml_file.read()
@@ -1301,7 +1489,9 @@ class Parser():
     def _parse_columns(self, element: etree._Element) -> None:
         """
         Parses the workspace element
-            :param element: the 'Columns' element
+
+        Args:
+            element: the 'Columns' element
         """
         # Clear old list
         self.keywords = []
@@ -1313,7 +1503,9 @@ class Parser():
     def _parse_matrices(self, element: etree._Element) -> None:
         """
         Parses the workspace transformation matrices (= compensation matrix)
-            :param element: the 'Matrices' element
+
+        Args:
+            element: the 'Matrices' element
         """
         # Clear old list
         self.matrices = {}
@@ -1326,7 +1518,9 @@ class Parser():
     def _parse_cytometers(self, element: etree._Element) -> None:
         """
         Parses the workspace cytometers data
-            :param element: the 'Cytometers' element
+
+        Args:
+            element: the 'Cytometers' element
         """
         # Clear old data
         self.cytometers = []
@@ -1337,7 +1531,9 @@ class Parser():
     def _parse_groups(self, element: etree._Element) -> None:
         """
         Parses the workspace groups data
-            :param element: the 'Groups' element
+        
+        Args:
+            element: the 'Groups' element
         """
         # Clear old data
         self.groups = {}
@@ -1349,7 +1545,9 @@ class Parser():
     def _parse_sample_list(self, element: etree._Element) -> None:
         """
         Parses the workspace sample list data
-            :param element: the 'SampleList' element
+
+        Args:
+            element: the 'SampleList' element
         """
         # Clear old data
         self.samples = {}

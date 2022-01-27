@@ -1,11 +1,11 @@
 ##############################################################################     ##    ######
 #    A.J. Zwijnenburg                   2020-09-24           v1.4                 #  #      ##
-#    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
+#    Copyright (C) 2023 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2020 - AJ Zwijnenburg
+# Copyright (C) 2023 - AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,19 +24,11 @@
 """
 Objects for reading and manipulation of Flowjo v10 Compensation Matrix (.mtx) files
 
-:class: Matrix
-Basic Matrix class
-
-:class: CompensationMatrix
-A compensation matrix representing matrix
-
-:class: MTX
-A class for the opening, saving, and manipulation of FlowJo .mtx compensation matrix files
-
+TODO: Replace with proper matrix implementation
 """
 
 from __future__ import annotations
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Optional
 
 import copy
 import os.path
@@ -45,6 +37,11 @@ from lxml import etree
 class Matrix:
     """
     A basic matrix class with row/column metadata
+    
+    Args:
+        nrow: number of rows
+        ncol: number of columns
+        default: default (fill) value
     """
     def __init__(self, nrow: int=5, ncol: int=5, default: Union[None, int, float, bool]=None):
         self._row_count = nrow
@@ -116,13 +113,17 @@ class Matrix:
     def row(self, identifier: Union[int, str]) -> Matrix:
         """
         Returns the matrix row specified by the id.
-            :param identifier: an index or row name that identifies the row
-            :returns: a Matrix of the row
+
+        Args:
+            identifier: an index or row name that identifies the row
+
+        Returns:
+            a Matrix of the row
         """
         if isinstance(identifier, int):
-            index = self.__check_row_index(identifier)
+            index = self._check_row_index(identifier)
         elif isinstance(identifier, str):
-            index = self.__check_row_name(identifier)
+            index = self._check_row_name(identifier)
         else:
             raise TypeError("invalid identifier type")
 
@@ -140,9 +141,9 @@ class Matrix:
         Sets a row to data
         """
         if isinstance(identifier, int):
-            index = self.__check_row_index(identifier)
+            index = self._check_row_index(identifier)
         elif isinstance(identifier, str):
-            index = self.__check_row_name(identifier)
+            index = self._check_row_name(identifier)
         else:
             raise TypeError("invalid identifier type")
 
@@ -174,9 +175,9 @@ class Matrix:
         Removes a row from the matrix
         """
         if isinstance(identifier, int):
-            index = self.__check_row_index(identifier)
+            index = self._check_row_index(identifier)
         elif isinstance(identifier, str):
-            index = self.__check_row_name(identifier)
+            index = self._check_row_name(identifier)
         else:
             raise TypeError("invalid identifier type")
 
@@ -193,13 +194,17 @@ class Matrix:
     def col(self, identifier: Union[int, str]) -> Matrix:
         """
         Returns the matrix column specified by the id.
-            :param identifier: an index or column name that identifies the column
-            :returns: a Matrix of the column
+        
+        Args:
+            identifier: an index or column name that identifies the column
+
+        Returns:
+            a Matrix of the column
         """
         if isinstance(identifier, int):
-            index = self.__check_col_index(identifier)
+            index = self._check_col_index(identifier)
         elif isinstance(identifier, str):
-            index = self.__check_col_name(identifier)
+            index = self._check_col_name(identifier)
         else:
             raise TypeError("invalid identifier type")
 
@@ -219,9 +224,9 @@ class Matrix:
         Sets a column to data
         """
         if isinstance(identifier, int):
-            index = self.__check_col_index(identifier)
+            index = self._check_col_index(identifier)
         elif isinstance(identifier, str):
-            index = self.__check_col_name(identifier)
+            index = self._check_col_name(identifier)
         else:
             raise TypeError("invalid identifier type")
 
@@ -267,9 +272,9 @@ class Matrix:
         Removes a column from the matrix
         """
         if isinstance(identifier, int):
-            index = self.__check_col_index(identifier)
+            index = self._check_col_index(identifier)
         elif isinstance(identifier, str):
-            index = self.__check_col_name(identifier)
+            index = self._check_col_name(identifier)
         else:
             raise TypeError("invalid identifier type")
 
@@ -296,6 +301,9 @@ class Matrix:
     def append_matrix_row(self, other: Matrix) -> None:
         """
         Appends a matrix as new rows.
+
+        Raises:
+            ValueError: if the other matrix cannot be appended
         """
         if self._col_names != other._col_names:
             raise ValueError("unequal column names. Column names must be equal for appending")
@@ -314,6 +322,9 @@ class Matrix:
     def append_matrix_col(self, other: Matrix) -> None:
         """
         Appends a matrix as new columns.
+
+        Raises:
+            ValueError: if the other matrix cannot be appended
         """
         if self._row_names != other._row_names:
             raise ValueError("unequal row names. Row names must be equal for appending")
@@ -345,7 +356,9 @@ class Matrix:
     def order_row(self, order: List[str]) -> None:
         """
         Orders the matrix row to the given order.
-            :raises ValueError: if order is incomplete
+
+        Raises:
+            ValueError: if order is incomplete
         """
         # Check order vs row names and the other way around
         raise NotImplementedError
@@ -353,9 +366,13 @@ class Matrix:
     def __check_row_input_list(self, data: list, rows: int = 1) -> None:
         """
         Checks an input list for correct typing
-            :param data: the data to check
-            :param rows: the amount of rows the data will use
-            :raises ValueError: if the typing is incorrect
+
+        Args:
+            the data to check
+            the amount of rows the data will use
+        
+        Raises:
+            ValueError: if the typing is incorrect
         """
         # Check typing
         if self._matrix and self._matrix[0] != None:
@@ -372,9 +389,13 @@ class Matrix:
     def __check_col_input_list(self, data: list, cols: int = 1) -> None:
         """
         Checks an input list for correct typing
-            :param data: the data to check
-            :param rows: the amount of columns the data will use
-            :raises ValueError: if the typing is incorrect
+
+        Args:
+            data: the data to check
+            rows: the amount of columns the data will use
+
+        Raises:
+            ValueError: if the typing is incorrect
         """
         # Check typing
         if self._matrix and self._matrix[0] != None:
@@ -388,11 +409,18 @@ class Matrix:
         if len(data) != self._row_count * cols:
             raise ValueError("data length doesnt fit in a Matrix column")
 
-    def __check_row_index(self, index: int) -> int:
+    def _check_row_index(self, index: int) -> int:
         """
-        Checks whether the row index is valid, and returns the positive index
-            :raises IndexError: if index is out of range
-            :returns: the positive row index
+        Checks whether the row index is valid, and returns the positive index incase of negative indexing
+
+        Args:
+            index: the index, accepts indexing from the end
+
+        Raises:
+            IndexError: if index is out of range
+
+        Returns:
+            the positive row index
         """
         if index >= self._row_count:
             raise IndexError(f"matrix row index '{index}' out of range")
@@ -405,11 +433,18 @@ class Matrix:
         
         return index
     
-    def __check_col_index(self, index: int) -> int:
+    def _check_col_index(self, index: int) -> int:
         """
         Checks whether the column index is valid, and returns the positive index
-            :raises IndexError: if index is out of range
-            :returns: the positive row index
+
+        Args:
+            index: the index, accepts indexing from the end
+
+        Raises:
+            IndexError: if index is out of range
+
+        Returns:
+            the positive col index
         """
         if index >= self._col_count:
             raise IndexError(f"matrix column index '{index}' out of range")
@@ -422,10 +457,18 @@ class Matrix:
         
         return index
     
-    def __check_row_name(self, name: str) -> int:
+    def _check_row_name(self, name: str) -> int:
         """
         Checks whether a specified row name exists and returns the row index
-            :raises KeyError: if row name is not found
+
+        Args:
+            name: the row name
+
+        Raises:
+            KeyError: if row name is not found
+
+        Returns:
+            the row index
         """
         is_identifier = False
         for index, row_name in enumerate(self._row_names):
@@ -438,10 +481,18 @@ class Matrix:
             
         return index
     
-    def __check_col_name(self, name: str) -> int:
+    def _check_col_name(self, name: str) -> int:
         """
         Checks whether a specified column name exists and returns the column index
-            :raises KeyError: if column name is not found
+        
+        Args:
+            name: the column name
+
+        Raises:
+            KeyError: if column name is not found
+
+        Returns:
+            the column index
         """
         is_identifier = False
         for index, col_name in enumerate(self._col_names):
@@ -475,9 +526,9 @@ class Matrix:
 
     def __getitem__(self, key: Union[slice, int]) -> Matrix:
         if isinstance(key, slice):
-            index_start = self.__check_row_index(key.start)
+            index_start = self._check_row_index(key.start)
             try:
-                index_stop = self.__check_row_index(key.stop -1)
+                index_stop = self._check_row_index(key.stop -1)
             except IndexError:
                 index_stop = self._row_count -1
 
@@ -627,12 +678,14 @@ class Matrix:
 class CompensationMatrix:
     """
     A Compensation Matrix class, wraps a Matrix class
-        :param n: the amount of fluorophore entrees
+    
+    Args:
+        n: the amount of fluorophore entrees
     """
     def __init__(self, n: int=5):
         self._matrix = Matrix(n, n, 0.0)
 
-        self.__set_self_interaction()        
+        self._set_self_interaction()        
 
     @property
     def names(self) -> List[str]:
@@ -662,15 +715,15 @@ class CompensationMatrix:
 
     def emplace_row(self, identifier: Union[int, str], data: list) -> None:
         self._matrix.emplace_row(identifier, [float(x) for x in data])
-        self.__set_self_interaction()
+        self._set_self_interaction()
 
-    def append_row(self, identifier: Union[str], data: list) -> None:
+    def append_row(self, identifier: str, data: list) -> None:
         if identifier is None:
             raise ValueError("identifier should be of type str")
         
         self._matrix.append_row(identifier, [float(x) for x in data])
         #self._matrix.append_col(identifier, [5.0]*self._matrix._row_count)
-        #self.__set_self_interaction()
+        #self._set_self_interaction()
 
     def erase_row(self, identifier: Union[int, str]) -> None:
         self._matrix.erase_row(identifier)
@@ -678,15 +731,15 @@ class CompensationMatrix:
 
     def emplace_col(self, identifier: Union[int, str], data: list) -> None:
         self._matrix.emplace_col(identifier, [float(x) for x in data])
-        self.__set_self_interaction()
+        self._set_self_interaction()
 
-    def append_col(self, identifier: Union[str], data: list) -> None:
+    def append_col(self, identifier: str, data: list) -> None:
         if identifier is None:
             raise ValueError("identifier should be of type str")
 
         self._matrix.append_col(identifier, [float(x) for x in data])
         self._matrix.append_col(identifier, [0.0]*self._matrix._row_count)
-        self.__set_self_interaction()
+        self._set_self_interaction()
 
     def erase_col(self, identifier: Union[int, str]) -> None:
         self._matrix.erase_row(identifier)
@@ -695,9 +748,9 @@ class CompensationMatrix:
     def emplace(self, identifier: Union[int, str], row_data: list, col_data: list) -> None:
         self._matrix.emplace_row(identifier, row_data)
         self._matrix.emplace_col(identifier, col_data)
-        self.__set_self_interaction()
+        self._set_self_interaction()
     
-    def append(self, identifier: Union[str], row_data: list, col_data: list) -> None:
+    def append(self, identifier: str, row_data: list, col_data: list) -> None:
         if identifier is None:
             raise ValueError("identifier should be of type str")
 
@@ -710,9 +763,9 @@ class CompensationMatrix:
         self._matrix.erase_row(identifier)
         self._matrix.erase_col(identifier)
     
-    def __set_self_interaction(self):
+    def _set_self_interaction(self):
         """
-        Sets the matrix interaction between identical entrees to 1.0, which is always the diagonal
+        Sets the matrix interaction between identical entrees to 1.0 (aka the diagonal)
         """
         for i in range(0, self._matrix._row_count):
             index = (i * self._matrix._col_count) + i
@@ -743,30 +796,45 @@ class CompensationMatrix:
 
     def __add__(self, other: Union[float, int, bool, Matrix]) -> Matrix:
         item = self._matrix + other._matrix
-        item.__set_self_interaction()
+        item._set_self_interaction()
         return item
 
     def __iadd__(self, other: Union[float, int, bool, Matrix]) -> None:
         self._matrix += other._matrix
-        self.__set_self_interaction()
+        self._set_self_interaction()
         return self
 
     def __sub__(self, other: Union[float, int, bool, Matrix]) -> Matrix:
         item = self._matrix - other._matrix
-        item.__set_self_interaction()
+        item._set_self_interaction()
         return item
 
     def __isub__(self, other: Union[float, int, bool, Matrix]) -> None:
         self._matrix += other._matrix
-        self.__set_self_interaction()
+        self._set_self_interaction()
         return self
 
 class MTX():
     """
     Class for opening and manipulation of FlowJo mtx files. 
     Extends a CompensationMatrix class (use .matrix attribute)
+
+    Args:
+        path: the path to a mtx file (see classmethod for specific instantiation options)
+
+    Attributes:
+        id: the matrix id; this must be unique otherwise FlowJo silently refuses to load the matrix
+        name: the name of the matrix
+        version: the flowjo matrix version
+        status: unknown usage
+        prefix: the prefix to specify in flowjo the parameter is compensated (eg. Comp-)
+        suffix: the suffic to specify in flowjo the parameter is compensated
+        editable: whether the matrix is editable
+        color: the color definition of the matrix
+        parameters: the parameter with naming convention
+        path: the path to a mtx file
     """
-    def __init__(self, path: str=None) -> None:
+    def __init__(self, path: Optional[str]=None) -> None:
         self._path: str = None
 
         # the matrix
@@ -793,7 +861,10 @@ class MTX():
     def from_mtx(cls, path: str):
         """
         Alternative instantation method of the MTX class.
-        As alternative to the from_wsp classmethod
+        
+        Args:
+            cls: the class
+            path: the mtx filepath
         """
         return cls(path)
 
@@ -801,7 +872,10 @@ class MTX():
     def from_wsp(cls, element: etree._Element):
         """
         Instantiates the matrix class from the xml tree directly extracted from a .wsp file
-            :param element: the transforms:spilloverMatrix element
+
+        Args:
+            cls: the class
+            element: the transforms:spilloverMatrix element
         """
         temp = cls(None)
         temp._parse_from_wsp(element)
@@ -811,13 +885,19 @@ class MTX():
     def path(self) -> str:
         """
         Getter for path
+
+        Returns:
+            path
         """
         return self._path
 
     @path.setter
-    def path(self, path: str) -> str:
+    def path(self, path: str) -> None:
         """
         Setter for path
+
+        Args:
+            path: path
         """
         # Check if file exists
         if not os.path.isfile(self.path):
@@ -837,7 +917,12 @@ class MTX():
     def _parse_from_wsp(self, element: etree._Element) -> None:
         """
         Extra the compensation matrix from the xml tree directly extracted from a .wsp file
-            :param element: the transforms:spilloverMatrix element
+        
+        Args:
+            element: the transforms:spilloverMatrix element
+
+        Raises:
+            ValueError: if element doesnt contain a spillover matrix
         """
         matrix_data: Matrix = None
 
@@ -878,7 +963,7 @@ class MTX():
                     else:
                         matrix_data.append_matrix_row(matrix)
         else:
-            raise ValueError("element doesnt contain a spillovermatrix")     
+            raise ValueError("element doesnt contain a spillover matrix")     
 
         # Totally not hacky upgrade to CompensationMatrix
         self.matrix = CompensationMatrix(n=matrix_data.row_count)
@@ -887,8 +972,9 @@ class MTX():
     def _parse_from_path(self) -> None:
         """
         Parses the mtx file
-            :raises ValueError: if the file cannot be parsed
-            :returns: the compensation matrix
+
+        Raises:
+            ValueError: if the file cannot be parsed
         """
         with open(self.path, mode='rb') as xml_file:
             xml_string = xml_file.read()
@@ -951,6 +1037,9 @@ class MTX():
     def _dump(self) -> str:
         """
         Creates a (very) rough XML dump of this matrix
+
+        Returns:
+            A xml dump
         """
         start = f"""<?xml version="1.0" encoding="UTF-8"?>\n  <gating:gatingML>\n    <transforms:spilloverMatrix spectral="{self.spectral}"  prefix="{self.prefix}"  name="{self.name}"  editable="{self.editable}"  color="{self.color}"  version="{self.version}"  status="{self.status}"  transforms:id="{self.id}"  suffix="{self.suffix}" >\n"""
         parameters = f"      <data-type:parameters>\n"
@@ -976,7 +1065,12 @@ class MTX():
     def save(self, path: str) -> None:
         """
         Saves the matrix as a flowjo .mtx file to path
-            :raises ValueError: if file cannot be saved
+
+        Args:
+            path: save path
+
+        Raises:
+            ValueError: if file cannot be saved
         """
         if os.path.isfile(path):
             raise ValueError("file already exists")

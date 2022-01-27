@@ -1,11 +1,11 @@
 ##############################################################################     ##    ######
 #    A.J. Zwijnenburg                   2021-05-15           v1.11                #  #      ##
-#    Copyright (C) 2021 - AJ Zwijnenburg          GPLv3 license                  ######   ##
+#    Copyright (C) 2023 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2021 - AJ Zwijnenburg
+# Copyright (C) 2023 - AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,59 +24,25 @@
 """
 Classes for the representation of data/scale transformations. 
 For conversions of data from the untransformed (global) scale to the transformed (local) scale.
-
-:class: _AbstractGenerator
-Abstract class provides a generator of an arbitrary range of ticks/label of a transformation
-This abstract class provides an interface for the transform classes.
-.labels()   - returns a list of labels representative for the transform class
-.major_ticks() - returns the scaled mayor ticks (corresponding to the labels)
-.minor_ticks() - returns the scaled minor ticks
-
-:class: LinearGenerator
-Generates the ticks/labels for a linear transform/scale
-
-:class: Log10Generator
-Generates the ticks/labels for a log10 transform/scale
-
-:class: BiexGenerator
-Generates the ticks/labels for a biexponential transform/scale
-
-:class: _Abstract
-Abstract class providing transformations for major/minor ticks and labels (according to FlowJo)
-.scale()    - scaling of a single value
-.scaler()   - scaling of a list of values
-.labels()   - returns a list of labels representative for the transform class
-.major_ticks() - returns the scaled mayor ticks (corresponding to the labels)
-.minor_ticks() - returns the scaled minor ticks
-
-:class: Linear
-The linear transform class
-(see _Abstract for attributes/functions)
-
-:class: Log10
-The Logarithmic (log10) transform class
-(see _Abstract for attributes/functions)
-
-:class: Biex
-The biexponential transform class
-(see _Abstract for attributes/functions)
-
 """
 from __future__ import annotations
 from typing import Callable, List, Dict, Tuple
 
-import numpy as np
 import bisect
 import copy
 import sys
+import numpy as np
 
 class _AbstractGenerator():
     """
     Abstract Generator. Abstract class for generators of labels, minor/major tick locations 
     for 'infinite' range transforms. Should be subclassed for a scale-specific implementation.
-    Is defined to only generate labels/ticks in the specified (global) range.
+    Generates only labels/ticks in the specified (global) range.
+
+    Attributes:
+        _SUPERSCRIPT: lookup-table for superscripted numbers
     """
-    _superscript: Dict[str, str]={
+    _SUPERSCRIPT: Dict[str, str]={
         "-":"⁻",
         "0":"⁰",
         "1":"¹",
@@ -96,36 +62,56 @@ class _AbstractGenerator():
     def labels(self, start: int, end: int) -> List[str]:
         """
         Returns a list of the labels between start and end
-            :param start: the global space start
-            :param end: the global space end
+
+        Args:
+            start: the global space start
+            end: the global space end
+
+        Returns:
+            A list of labels
         """
         raise NotImplementedError("implement in child class")
 
     def major_ticks(self, start: int, end: int) -> List[int]:
         """
         Returns a list of the major ticks between start and end
-            :param start: the global space start
-            :param end: the global space end
+
+        Args:
+            start: the global space start
+            end: the global space end
+
+        Returns:
+            a list of major tick coordinates in global space
         """
         raise NotImplementedError("implement in child class")
     
     def minor_ticks(self, start: int, end: int) -> List[int]:
         """
         Returns a list of the minor ticks between start and end
-            :param start: the global space start
-            :param end: the global space end
+
+        Args:
+            start: the global space start
+            end: the global space end
+
+        Returns:
+            a list of minor tick coordinates in global space
         """
         raise NotImplementedError("implement in child class")
 
     def __eq__(self, other) -> bool:
         """
-        Test for equality. Should be able to handle all transform classes
+        Test for equality. Handles all transform classes
         """
         raise NotImplementedError("implement in child class")
 
 class LinearGenerator(_AbstractGenerator):
     """
-    Generates labels, minor/major tick locations for a linear scale
+    Generates labels, minor/major tick locations for a global scale
+
+    Attributes:
+        begin: the first tick/label (to be able) to be generated in global space
+        stepsize_minor: distance between minor ticks in global space
+        stepsize_major: distance between major ticks in global space
     """
     def __init__(self):
         super().__init__()
@@ -134,11 +120,6 @@ class LinearGenerator(_AbstractGenerator):
         self.stepsize_major: int = 50_000
 
     def labels(self, start: int, end: int) -> List[str]:
-        """
-        Returns a list of the labels between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         ticks = self.major_ticks(start, end)
 
         values: List[str] = []
@@ -157,11 +138,6 @@ class LinearGenerator(_AbstractGenerator):
         return values
     
     def major_ticks(self, start: int, end: int) -> List[int]:
-        """
-        Returns a list of the major tick locations between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         begin_i = (start - self.begin) / self.stepsize_major
         end_i = (end - self.begin) / self.stepsize_major
 
@@ -206,11 +182,6 @@ class LinearGenerator(_AbstractGenerator):
         return values
 
     def minor_ticks(self, start: int, end: int) -> List[int]:
-        """
-        Returns a list of the minor ticks between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         begin_i = (start - self.begin) / self.stepsize_minor
         end_i = (end - self.begin) / self.stepsize_minor
 
@@ -262,9 +233,6 @@ class LinearGenerator(_AbstractGenerator):
         return values
 
     def __eq__(self, other) -> bool:
-        """
-        Test for equality.
-        """
         if not isinstance(other, LinearGenerator):
             return False
         
@@ -285,11 +253,6 @@ class Log10Generator(_AbstractGenerator):
         super().__init__()
 
     def labels(self, start: int, end: int) -> List[str]:
-        """
-        Returns a list of the labels between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         ticks = self.major_ticks(start, end)
 
         values: List[str] = []
@@ -305,18 +268,13 @@ class Log10Generator(_AbstractGenerator):
                 if value == "0":
                     value = "1"
                 else:
-                    value = "".join([self._superscript[x] for x in value])
+                    value = "".join([self._SUPERSCRIPT[x] for x in value])
                     value = "10{}".format(value)
             values.append(value)
 
         return values
 
     def major_ticks(self, start: int, end: int) -> List[int]:
-        """
-        Returns a list of the major tick locations between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         if start <= 0 or end <= 0:
             raise ValueError("cannot generate a log ticks <= 0")
 
@@ -369,11 +327,6 @@ class Log10Generator(_AbstractGenerator):
         return values
 
     def minor_ticks(self, start: int, end: int) -> List[int]:
-        """
-        Returns a list of the minor tick locations between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         if start <=0 or end <= 0:
             raise ValueError("cannot generate a log ticks <= 0")
 
@@ -492,11 +445,6 @@ class BiexGenerator(_AbstractGenerator):
         super().__init__()
 
     def labels(self, start: int, end: int) -> List[str]:
-        """
-        Returns a list of the labels between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         ticks = self.major_ticks(start, end)
 
         values: List[str] = []
@@ -523,7 +471,7 @@ class BiexGenerator(_AbstractGenerator):
                 if value == "0":
                     value = "1"
                 else:
-                    value = "".join([self._superscript[x] for x in value])
+                    value = "".join([self._SUPERSCRIPT[x] for x in value])
                     if is_negative:
                         value = "-10{}".format(value)
                     else:
@@ -533,11 +481,6 @@ class BiexGenerator(_AbstractGenerator):
         return values
 
     def major_ticks(self, start: int, end: int) -> List[int]:
-        """
-        Returns a list of the major tick locations between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         # The ticks overlap with the log10 scale
         values: List[int] = []
 
@@ -603,8 +546,13 @@ class BiexGenerator(_AbstractGenerator):
         """
         Helper function returns a list of log10 major tick locations between start and end
         Returns from 1 (but not included) onwards
-            :param start: the global space start
-            :param end: the global space end
+
+        Args:
+            start: the global space start
+            end: the global space end
+
+        Returns:
+            list of log10 major tick coordinates in global space
         """
         decade_start = np.log10(start)
         decade_end = np.log10(end)
@@ -661,11 +609,6 @@ class BiexGenerator(_AbstractGenerator):
         return values
 
     def minor_ticks(self, start: int, end: int) -> List[int]:
-        """
-        Returns a list of the minor tick locations between start and end
-            :param start: the global space start
-            :param end: the global space end
-        """
         values: List[int] = []
 
         if start == end:
@@ -728,8 +671,13 @@ class BiexGenerator(_AbstractGenerator):
         """
         Helper function: Returns a list of the log10 minor tick locations between start and end
         Spikes in 1 as a minor tick location and doesnt returns for ticks <1.
-            :param start: the global space start
-            :param end: the global space end
+
+        Args:
+            start: the global space start
+            end: the global space end
+
+        Returns:
+            a list of log10 minor tick locations
         """
         decade_start = np.log10(start)
         decade_end = np.log10(end)
@@ -856,6 +804,13 @@ class _Abstract():
     Abstract representation of a scale. This class returns the tick-marks / tick-labels
     of the global range projected onto the local (linear) range
     In other words: This class calculates the tick-marks as would be plotted in FlowJo.
+
+    Attributes:
+        l_start: local space start
+        l_end: local space end
+        g_start: global space start
+        g_end: global space end
+        generator: a generator for ticks and labels
     """
     def __init__(self):
         # start and end are in global space
@@ -868,26 +823,42 @@ class _Abstract():
     def scale(self, data: float) -> float:
         """
         Scales a single value
-            :param data: the data to scale
+
+        Args:
+            data: the data to scale
+
+        Returns:
+            scaled data
         """
         return self.scaler([data])[0]
 
     def scaler(self, data: List[float]) -> List[float]:
         """
         The scaling function
-            :param data: the data to scale
+
+        Args:
+            data: the data to scale
+
+        Returns:
+            scaled data
         """
         raise NotImplementedError("implement in child class")
 
     def labels(self) -> List[str]:
         """
         Returns the labels for the major ticks (for coordinates use major_ticks())
+
+        Returns:
+            a set of labels within global space
         """
         return self.generator.labels(self.g_start, self.g_end)
  
     def major_ticks(self) -> List[float]:
         """
         Returns the major tick locations
+
+        Returns:
+            a set of major ticks scaled to local space
         """
         ticks = self.generator.major_ticks(self.g_start, self.g_end)
 
@@ -898,6 +869,9 @@ class _Abstract():
     def minor_ticks(self) -> List[float]:
         """
         Returns the minor tick locations
+
+        Returns:
+            a set of minor ticks scaled to local space
         """
         ticks = self.generator.minor_ticks(self.g_start, self.g_end)
 
@@ -908,17 +882,30 @@ class _Abstract():
     def __eq__(self, other) -> bool:
         """
         Test for equality. Should be able to handle all transform classes
+
+        Raises:
+            ValueError: when classes cannot be compared
         """
         raise NotImplementedError("implement in child class")
 
 class Linear(_Abstract):
     """
     Represents a linear scale between the start and end value
-        :param l_start: start local value
-        :param l_end: end local value
-        :param g_start: start global value
-        :param g_end: end global value
-        :param gain: (unused) gain
+
+    Args:
+        l_start: start local value
+        l_end: end local value
+        g_start: start global value
+        g_end: end global value
+        gain: (unused) gain
+
+    Attributes:
+        generator: the tick mark/label generator
+        l_start: start local value
+        l_end: end local value
+        g_start: start global value
+        g_end: end global value
+        gain: (unused) gain
     """
     def __init__(self, l_start: float=0, l_end: float=1023, g_start: int=0, g_end: int=262144, gain: float=1):
         super().__init__()
@@ -931,10 +918,6 @@ class Linear(_Abstract):
         self.gain: float = gain   #unused
 
     def scaler(self, data: List[float]) -> List[float]:
-        """
-        The scaling function
-            :param data: the data to scale
-        """
         data = copy.deepcopy(data)
 
         # Get scaling parameters
@@ -950,6 +933,13 @@ class Linear(_Abstract):
         return data
 
     def __eq__(self, other) -> bool:
+        """
+        Test for equality. Should be able to handle all transform classes
+
+        Raises:
+            ValueError: when classes cannot be compared
+            NotImplementedError: when gain is different between comparisons.
+        """
         if not isinstance(other, _Abstract):
             raise ValueError("can only test equality against other transform classes")
 
@@ -976,10 +966,22 @@ class Linear(_Abstract):
 class Log10(_Abstract):
     """
     Represents a logarithmic scale between the start and end value
-        :param l_start: start local value
-        :param l_end: end local value
-        :param g_start: global start value
-        :param g_end: global end value
+    
+    Args:
+        l_start: start local value
+        l_end: end local value
+        g_start: start global value
+        g_end: end global value
+
+    Attributes:
+        generator: the tick mark/label generator
+        l_start: start local value
+        l_end: end local value
+        g_start: start global value
+        g_end: end global value
+
+    Raises:
+        ValueError: when global space starts <=0
     """
     def __init__(self, l_start: float=0, l_end: float=1023, g_start: float=3, g_end: float=262144):
         super().__init__()
@@ -994,10 +996,6 @@ class Log10(_Abstract):
             raise ValueError("logarithmic scale have to start with a value >0")
 
     def scaler(self, data: List[float]) -> List[float]:
-        """
-        The scaling function
-            :param data: the data to scale
-        """
         data = copy.deepcopy(data)
 
         # Get scaling parameters
@@ -1043,13 +1041,26 @@ class Biex(_Abstract):
     Represents a biexponential scale between the start and end value.
     This class generates a look-up table. This is faster for big matrix transforms. 
     But a bit waistfull for small number of iterations. Ow well.
-        :param l_start: start local value
-        :param l_end: end local value
-        :param g_end: global end value
-        :param neg_decade: the extra negative decades
-        :param width: the biexponential width parameter
-        :param pos_decade: the positive decades
-        :param length: (unused) the lookup table resolution
+
+    Args:
+        l_start: start local value
+        l_end: end local value
+        g_end: global end value
+        neg_decade: the extra negative decades
+        width: the biexponential width parameter
+        pos_decade: the positive decades
+        length: (unused) the lookup table resolution
+
+    Attributes:
+        l_start: start local value
+        l_end: end local value
+        g_end: global end value
+        neg_decade: the extra negative decades
+        width: the biexponential width parameter
+        pos_decade: the positive decades
+        length: (unused) the lookup table resolution
+        values: the biex transformed (local) value
+        lookup: the local biex transformed(see values) cutoffs in global space
     """
     def __init__(self, l_start: float=0, l_end: float=1023, g_end: float=262144, neg_decade: float=0, width: float=-100, pos_decade: float=4.418539922, length: int=256):
         super().__init__()
@@ -1068,10 +1079,6 @@ class Biex(_Abstract):
         self._lookup_range: Tuple[int, int] = None # in local space
 
     def scaler(self, data: List[float]) -> List[float]:
-        """
-        The scaling function. Values outside the lookup range will be placed outside the start-end range
-            :param data: the data to scale
-        """
         self._check_lookup()
 
         data = copy.deepcopy(data)
@@ -1094,9 +1101,6 @@ class Biex(_Abstract):
         return data
 
     def labels(self) -> Tuple[List[float], List[str]]:
-        """
-        Returns the labels for the major ticks (for coordinates use major_ticks())
-        """
         self._check_lookup()
         labels = self.generator.labels(self.lookup[0], self.lookup[-1])
 
@@ -1125,9 +1129,6 @@ class Biex(_Abstract):
         return labels
 
     def major_ticks(self) -> List[float]:
-        """
-        Returns the major tick locations
-        """
         self._check_lookup()
         ticks = self.generator.major_ticks(self.lookup[0], self.lookup[-1])
         ticks = self.scaler(ticks)
@@ -1135,9 +1136,6 @@ class Biex(_Abstract):
         return ticks
     
     def minor_ticks(self) -> List[float]:
-        """
-        Returns the minor tick locations
-        """
         self._check_lookup()
         ticks = self.generator.minor_ticks(self.lookup[0], self.lookup[-1])
         ticks = self.scaler(ticks)
@@ -1233,9 +1231,16 @@ class Biex(_Abstract):
         self._lookup_range = (self.l_start, self.l_end)
 
     @staticmethod
-    def _log_root(positive_range: float, width: float):
+    def _log_root(positive_range: float, width: float) -> float:
         """
         Approximates (?) logarithmic root (i think). See _scaler for source
+        
+        Args:
+            positive_range: the biex positive range
+            width: the width parameter
+
+        Returns:
+            approximated logarithmic root
         """
         x_low = 0
         x_high = positive_range
@@ -1304,18 +1309,30 @@ class Biex(_Abstract):
         return True
 
     def __repr__(self) -> str:
-        return f"(BiexTransform:[{self.g_end};{self.width:.1f};{self.pos_decade:.1f}]->[{self.l_start}-{self.l_end}])"
+        return f"(BiexTransform:[{self.g_end};{self.width:.2f};{self.pos_decade:.2f}]->[{self.l_start}-{self.l_end}])"
 
 class Fasinh(_Abstract):
     """
     Represents a inverse hyperblic sine transformation.
-        :param l_start: start local value
-        :param l_end: end local value
-        :param t: global end value / top of scale
-        :param m: the number of (positive) decades
-        :param a: the number of additional negative decades
-        :param w: (unused) the number of decades in the linear section
-        :param length: (unused) the lookup table resolution
+
+    Args:
+        l_start: start local value
+        l_end: end local value
+        t: global end value / top of scale
+        m: the number of (positive) decades
+        a: the number of additional negative decades
+        w: (unused) the number of decades in the linear section
+        length: (unused) the lookup table resolution
+
+    Attributes:
+        l_start: start local value
+        l_end: end local value
+        g_end: global end; for adherence to the _Abstract api, otherwise unused
+        t: global end value / top of scale
+        m: the number of (positive) decades
+        a: the number of additional negative decades
+        w: (unused) the number of decades in the linear section
+        length: (unused) the lookup table resolution
     """
     def __init__(self, l_start: float=0, l_end: float=1023, t: float=262144, m: float=5.418539922, a: float=0.5, w: float=-262144, length: int=256):
         super().__init__()
@@ -1323,7 +1340,7 @@ class Fasinh(_Abstract):
 
         self.l_start: float = l_start
         self.l_end: float = l_end
-        self.g_end: float = t   # for adherence to the _Abstract api, otherwise unused
+        self.g_end: float = t
         self.t: float = t
         self.m: float = m
         self.a: float = a
@@ -1331,10 +1348,6 @@ class Fasinh(_Abstract):
         self.length: int = length   #unused - likely a reference flowjo's implementation
 
     def scaler(self, data: List[float]) -> List[float]:
-        """
-        The scaling function
-            :param data: the data to scale
-        """
         data = copy.deepcopy(data)
 
         #                   asinh(x sinh(M ln(10)) / T) + A ln(10)
@@ -1373,16 +1386,10 @@ class Fasinh(_Abstract):
         return data
 
     def labels(self) -> List[str]:
-        """
-        Returns the labels for the major ticks (for coordinates use major_ticks())
-        """
         g_start = -10**self.a
         return self.generator.labels(g_start, self.t)
  
     def major_ticks(self) -> List[float]:
-        """
-        Returns the major tick locations
-        """
         g_start = -10**self.a
         ticks = self.generator.major_ticks(g_start, self.t)
 
@@ -1391,9 +1398,6 @@ class Fasinh(_Abstract):
         return ticks
     
     def minor_ticks(self) -> List[float]:
-        """
-        Returns the minor tick locations
-        """
         g_start = -10**self.a
         ticks = self.generator.minor_ticks(g_start, self.t)
 
@@ -1422,19 +1426,28 @@ class Fasinh(_Abstract):
         return True
 
     def __repr__(self) -> str:
-        return f"(FasinhTransform:[{self.t};{self.m:.1f};{self.a:.1f}]->[{self.l_start}-{self.l_end}])"
+        return f"(FasinhTransform:[{self.t};{self.m:.2f};{self.a:.2f}]->[{self.l_start}-{self.l_end}])"
 
 class Hyperlog(_Abstract):
     """
     Represents a hyperlog transformation.
     Implementation based on https://github.com/RGLab/flowCore/blob/master/src/Hyperlog.cpp
-        :param l_start: start local value
-        :param l_end: end local value
-        :param t: global end value / top of scale
-        :param m: the number of (positive) decades
-        :param a: the number of additional negative decades
-        :param w: the number of decades in the linear section
-        :param length: (unused) the lookup table resolution
+
+    Args:
+        l_start: start local value
+        l_end: end local value
+        t: global end value / top of scale
+        m: the number of (positive) decades
+        a: the number of additional negative decades
+        w: the number of decades in the linear section
+        length: (unused) the lookup table resolution
+
+    Attributes:
+        TAYLOR_LENGTH: the lenght of the taylor series for hyperlog approximation
+        HALLEY_ITERATIONS: the number of Halley iterations for root finding
+        generator: the tick & label generator
+
+    TODO: Fix the implementation
     """
     TAYLOR_LENGTH: int = 16
     HALLEY_ITERATIONS: int = 10
@@ -1443,7 +1456,7 @@ class Hyperlog(_Abstract):
         super().__init__()
         self.generator = BiexGenerator()
 
-        raise Exception("HYPERLOG IS STILL INCORRECT!")
+        raise NotImplementedError("HYPERLOG IS STILL INCORRECT!")
 
         self.l_start: float = l_start
         self.l_end: float = l_end
@@ -1486,7 +1499,16 @@ class Hyperlog(_Abstract):
 
     def scale(self, data: float) -> float:
         """
-        Scales the value according to hyperlog transform
+        Scales a single value
+
+        Args:
+            data: the data to scale
+
+        Returns:
+            scaled data
+
+        Raises:
+            ValueError: if hyperlog didnt converge
         """
         # Handle true zero separately
         if data == 0:
@@ -1550,8 +1572,16 @@ class Hyperlog(_Abstract):
 
     def scaler(self, data: List[float]) -> List[float]:
         """
-        The scaling function
-            :param data: the data to scale
+        Scales a single value
+
+        Args:
+            data: the data to scale
+
+        Returns:
+            scaled data
+
+        Raises:
+            ValueError: if hyperlog didnt converge
         """
         for i in range(0, len(data)):
             data[i] = self.scale(data[i])
@@ -1561,7 +1591,12 @@ class Hyperlog(_Abstract):
     def _inverse(self, data: float) -> float:
         """
         Reverts the scaled data back into unscaled form.
-        Expects a data range of 0-1
+
+        Args:
+            data: the data to unscale, expects a data range of 0-1
+
+        Returns:
+            the unscaled data
         """
         # Reflect negative scale regions
         negative: bool = data < self._x1
@@ -1587,9 +1622,6 @@ class Hyperlog(_Abstract):
             return inverse
 
     def labels(self) -> List[str]:
-        """
-        Returns the labels for the major ticks (for coordinates use major_ticks())
-        """
         g_start = self._inverse(0.0)
         labels = self.generator.labels(g_start, self.t)
 
@@ -1618,9 +1650,6 @@ class Hyperlog(_Abstract):
         return labels
  
     def major_ticks(self) -> List[float]:
-        """
-        Returns the major tick locations
-        """
         g_start = self._inverse(0.0)
         ticks = self.generator.major_ticks(g_start, self.t)
 
@@ -1629,9 +1658,6 @@ class Hyperlog(_Abstract):
         return ticks
     
     def minor_ticks(self) -> List[float]:
-        """
-        Returns the minor tick locations
-        """
         g_start = self._inverse(0.0)
         ticks = self.generator.minor_ticks(g_start, self.t)
 
@@ -1660,18 +1686,32 @@ class Hyperlog(_Abstract):
         return True
 
     def __repr__(self) -> str:
-        return f"(HyperlogTransform:[{self.t};{self.m:.1f};{self.a:.1f};{self.w:.1f}]->[{self.l_start}-{self.l_end}])"
+        return f"(HyperlogTransform:[{self.t};{self.m:.2f};{self.a:.2f};{self.w:.2f}]->[{self.l_start}-{self.l_end}])"
 
 class Logicle(_Abstract):
     """
     Represents the logicle transformation.
     Implementation based on https://github.com/RGLab/flowCore/src/Logicle.cpp
-        :param l_start: start local value
-        :param l_end: end local value
-        :param t: global end value / top of scale
-        :param m: the number of (positive) decades
-        :param a: the number of additional negative decades
-        :param w: the number of decades in the linear section
+
+    Args:
+        l_start: start local value
+        l_end: end local value
+        t: global end value / top of scale
+        m: the number of (positive) decades
+        a: the number of additional negative decades
+        w: the number of decades in the linear section
+
+    Attributes:
+        TAYLOR_LENGTH: the length of the taylor series approximation
+        HALLEY_ITERATIONS: the number of steps for root finding according to HALLEY's algorithm
+        generator: the tick and label generator
+        l_start: start local value
+        l_end: end local value
+        g_end: end global value, unused for logicle calc.
+        t: global end value / top of scale
+        m: the number of (positive) decades
+        w: the number of decades in the linear section
+        a: the number of additional negative decades
     """
     TAYLOR_LENGTH: int = 16
     HALLEY_ITERATIONS: int = 20
@@ -1723,6 +1763,13 @@ class Logicle(_Abstract):
     def _solve(self, b:float, w:float) -> float:
         """
         Approximate the root of the logicle transform
+        
+        Args:
+            b:
+            w: number of decades of the linear component
+        
+        Returns:
+            approximated root
         """
         # w==0 means it's really arcsinh
         if w == 0:
@@ -1752,10 +1799,15 @@ class Logicle(_Abstract):
     def _R_zeroin(ax: float, bx: float, f: Callable, tol: float, maxit: int) -> float:
         """
         Root finder routines, copied from stats/src/zeroin.c
-            :param ax: left border of the search range
-            :param bx: right border of the search range
-            :param f: the function under investigation
-            :param maxit: maximum number of iterations            
+
+        Args:
+            ax: left border of the search range
+            bx: right border of the search range
+            f: the function under investigation
+            maxit: maximum number of iterations
+
+        Returns:
+            root      
         """
         fa: float= f(ax)
         fb: float= f(bx)
@@ -1765,12 +1817,16 @@ class Logicle(_Abstract):
     def _R_zeroin2(ax: float, bx: float, fa: float, fb: float, f: Callable, tol: float, maxit: int) -> float:
         """
         Root finder routine; faster for "expensive" f(), in those typical case where f(ax) and f(bx) are available anyway
-            :param ax: left border of the search range
-            :param bx: right border of the search range
-            :param fa, fb: f(a), f(b)
-            :param f: function under investigation
-            :param tol: acceptable tolerance
-            :param maxit: maximum number of iterations
+
+        Args:
+            ax: left border of the search range
+            bx: right border of the search range
+            fa, fb: f(a), f(b)
+            f: function under investigation
+            tol: acceptable tolerance
+            maxit: maximum number of iterations
+
+        Returns: root
         """
         a: float=ax
         b: float=bx
@@ -1790,7 +1846,7 @@ class Logicle(_Abstract):
         while maxit:
             maxit -= 1
 
-            prev_step: float = b-a  # Distance from the last but one to the last approximation
+            prev_step: float = b-a  # Distance between the last and one to the last approximation
             tol_act: float = None   # Actual tolerance
             p: float = None         # interpolation step is calculated in the form of p/q
             q: float = None         # division operation is delayed until the last moment
@@ -1869,7 +1925,16 @@ class Logicle(_Abstract):
 
     def scale(self, data: float) -> float:
         """
-        Scales the value according to logicle transform
+        Scales a single value
+
+        Args:
+            data: the data to scale
+
+        Returns:
+            scaled data
+
+        Raises:
+            ValueError: if logicle didnt converge
         """
         # Handle true zero separately
         if data == 0:
@@ -1940,8 +2005,16 @@ class Logicle(_Abstract):
 
     def scaler(self, data: List[float]) -> List[float]:
         """
-        The scaling function
-            :param data: the data to scale
+        Scales a multiple values
+
+        Args:
+            data: the data to scale
+
+        Returns:
+            scaled data
+
+        Raises:
+            ValueError: if logicle didnt converge
         """
         for i in range(0, len(data)):
             data[i] = self.scale(data[i])
@@ -1951,7 +2024,12 @@ class Logicle(_Abstract):
     def _inverse(self, data: float) -> float:
         """
         Reverts the scaled data back into unscaled form.
-        Expects a data range of 0-1
+
+        Args:
+            data: the data to unscale, expects a data range of 0-1
+
+        Returns:
+            the unscaled data
         """
         # reflect negative scale regions
         negative: bool = data < self._x1
@@ -1978,9 +2056,6 @@ class Logicle(_Abstract):
             return inverse
 
     def labels(self) -> List[str]:
-        """
-        Returns the labels for the major ticks (for coordinates use major_ticks())
-        """
         g_start = self._inverse(0.0)
         labels = self.generator.labels(g_start, self.t)
 
@@ -2009,9 +2084,6 @@ class Logicle(_Abstract):
         return labels
  
     def major_ticks(self) -> List[float]:
-        """
-        Returns the major tick locations
-        """
         g_start = self._inverse(0.0)
         ticks = self.generator.major_ticks(g_start, self.t)
 
@@ -2020,9 +2092,6 @@ class Logicle(_Abstract):
         return ticks
     
     def minor_ticks(self) -> List[float]:
-        """
-        Returns the minor tick locations
-        """
         g_start = self._inverse(0.0)
         ticks = self.generator.minor_ticks(g_start, self.t)
 
@@ -2053,4 +2122,4 @@ class Logicle(_Abstract):
         return True
 
     def __repr__(self) -> str:
-        return f"(LogicleTransform:[{self.t};{self.m:.2f};{self.a:.1f};{self.w:.1f}]->[{self.l_start}-{self.l_end}])"
+        return f"(LogicleTransform:[{self.t};{self.m:.2f};{self.a:.2f};{self.w:.2f}]->[{self.l_start}-{self.l_end}])"

@@ -4,7 +4,7 @@ A library with (handy) tools for the handling of FlowJo related data.
 • The 'data' module allows for the loading and saving of CSV data.  
 • The 'wsp' module parses and exposes a FlowJo wsp file and allows for the annotation and export of gate annotated data.  
 • The 'plot' module provides FlowJo-like (and more) plotting functions for the data retreived by the data or wsp modules. Also provides an interface for dimensional reduction methods.  
-• The 'transform' module provides basic transformations for plotting.  
+• The 'transform' module provides the common transformations for plotting.  
 • The 'matrix' module allows the manipulation (and import, export) of FlowJo mtx compensation matrices.
 
 ## Authors
@@ -52,57 +52,72 @@ Workflow:
 • Now that we have used FlowJo to setup up the data for us, we will continue using this 'flowjo' module:
 
 ```python
-# The flowjo.wsp module contains components for the reading of .wsp files
-from flowjo.wsp import Workspace
+>>> # The flowjo.wsp module contains components for the reading of .wsp files
+>>> from flowjo.wsp import Workspace
 
-# Lets assume we have stored all data in the local 'mydata' directory
-# First we have to read the workspace file 
-workspace = Workspace("mydata/workspace.wsp")
+>>> # Lets assume we have stored all data in the local 'mydata' directory
+>>> # First we have to read the workspace file 
+>>> workspace = Workspace("mydata/workspace.wsp")
 
-# We need to add the csv data to this workspace
-# The format and compensation status have to be filled-in
-workspace.load_data("mydata", format="channel", compensated=True)
+>>> # We need to add the csv data to this workspace
+>>> # The format and compensation status have to be filled-in
+>>> workspace.load_data("mydata", format="channel", compensated=True)
 
-# Now we can have a look at the data within the .wsp file
-# Check the samples using:
-print(workspace.samples)
-# Check the groups using:
-print(workspace.groups)
+>>> # Now we can have a look at the data within the .wsp file
+>>> # Check the samples using: (ID: sample_name)
+>>> print(workspace.samples)
+10: sample_1
+27: sample_2
+50: sample_50
 
-# All data can be identically manipulated as a group or single sample, let's use a single sample as example:
-# Request a sample using the sample's name
-sample = workspace.samples["sample_1"]
-# You can check the gates like this:
-print(sample.gates)
-# You can select all events in a gate as follows:
-gate = sample.gates["gate_name"]
+>>> # Check the groups [with number of samples] using:
+>>> print(workspace.groups)
+All Samples [3]
+Compensation [0]
+Custom group [2]
 
-# You can grab all events in this gate:
-# This returns a Panda's DataFrame
-gate_data = gate.data()
+>>> # All data can be both manipulated as a group or single sample, let's use a single sample as example:
+>>> # Request a sample using the sample's name
+>>> sample = workspace.samples["sample_1"]
+>>> # You can check the gates like this:
+>>> print(sample.gates)
+Gate_root
+ ├╴Gate_child_1
+ │  ├╴Gate_subchild_1
+ │  └╴Gate_subchild_2
+ └╴Gate_child_2      
 
+>>> # You can select all events in a gate as follows:
+>>> # For example, to get all events from Gate_subchild_2
+>>> gate = sample.gates["Gate_root/Gate_child_1/Gate_subchild_2"]
+>>> # Next retreive the data from this gate
+>>> gate_data: pandas.DataFrame = gate.data()
 
-# You might want to plot this data
-# Therefore a useful plotting module is available
-from flowjo.plot import Plotter
+>>> # You might want to plot this data
+>>> # Therefore a useful plotting module is available
+>>> from flowjo.plot import Plotter
 
-# The plotter works with workspace/group/sample data
-plot = Plotter(sample)
+>>> # The plotter works with workspace/group/sample data
+>>> plot = Plotter(sample)
 
-# The plotter needs to know how to transform the data
-plot.transforms.update(sample.transforms())
+>>> # The plotter needs to know how to transform the data
+>>> plot.transforms.update(sample.transforms())
 
-# Plot a scatter plot with
-plot = plotter.scatter(x="CX3CR1", y="CD27", c="CCR7")
-# Or use the raster plot
-plot = plotter.raster(x="CX3CR1", y="CD27")
-# Additional statical operations can be performed on the rasterized data
-plot = plotter.raster_special(x="CX3CR1", y="CD27", c="CCR7", c_stat="mean")
+>>> # Plot a scatter plot with
+>>> plot = plotter.scatter(x="CX3CR1", y="CD27", c="CCR7")
+>>> # Or use the raster plot
+>>> plot = plotter.raster(x="CX3CR1", y="CD27")
+>>> # Additional statical operations can be performed on the rasterized data
+>>> plot = plotter.raster_special(x="CX3CR1", y="CD27", c="CCR7", c_stat="mean")
 
-# Finally lets show the graph to the world
-print(plot)
+>>> # Finally lets show the graph to the world
+>>> print(plot)
+```
 
-# For further details check the 'usage' or the function documentation inside the modules
+![Raster plot](tutorial/plot_raster.png)
+
+```python
+>>> # For further details check the 'usage' or the function documentation inside the modules
 ```
 
 ## Usage
@@ -210,11 +225,12 @@ factor = {"factor_name":{
 }}
 data = group.gate_data(factor=factor)
 
-# The exported data can be plotted with correct scales as follows:
+# The exported data can be plotted with correct transforms as follows:
 # First assign the data to a plotter
 from flowjo.plot import Plotter
 plot = Plotter(data)
-# The scale transformations has to be set manually; here the transforms are updated from the wsp information. Without transformation data, the plotter cannot rasterize or generate the proper axis ticks & labels.
+# The scale transformations has to be set manually; here the transforms are updated from the wsp information.
+# Without transformation data, the plotter cannot rasterize or generate the proper axis ticks & labels.
 plot.transforms.update(group.transforms())
 plot.scatter("x", "y", "color")
 ```
@@ -285,6 +301,10 @@ for single in files[1:]:
 combined.save("combined.mtx")
 ```
 
+## Known Issues
+
+Boolean OR and AND gates are not supported. They require a non-recursive approach to gate resolving.
+
 ## Version Info
 
 v1.0 - Implemented the compensation matrix tools and flowjo data annotated gate export protocol  
@@ -306,7 +326,9 @@ v1.15 - Implemented masking
 v1.16 - Implemented flowjo gate and density overlays  
 v1.17 - Implemented statistics gate nodes  
 v1.18 - Implemented reverse hyperbolic sin & logicle transforms. Updated to pandas 1.3  
-v1.19 - Implemented contribution and improved correlation graphs
+v1.19 - Implemented contribution and improved correlation graphs  
+v1.20 - Implemented heatmap and violin graphs  
+v1.21 - Docstring modified into Google style, clarified readme
 
 ## License
 

@@ -1,11 +1,11 @@
 ##############################################################################     ##    ######
 #    A.J. Zwijnenburg                   2020-09-04           v1.0                 #  #      ##
-#    Copyright (C) 2020 - AJ Zwijnenburg          GPLv3 license                  ######   ##
+#    Copyright (C) 2023 - AJ Zwijnenburg          GPLv3 license                  ######   ##
 ##############################################################################  ##    ## ######
 
 ## Copyright notice ##########################################################
 # FlowJo Tools provides a python API into FlowJo's .wsp files.
-# Copyright (C) 2020 - AJ Zwijnenburg
+# Copyright (C) 2023 - AJ Zwijnenburg
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by

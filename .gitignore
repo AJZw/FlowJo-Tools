@@ -32,15 +32,12 @@
 *.app
 
 # Folders
-__pycache__/
-.venv/
-.vscode/
-.sitemaps/
-.data/
-paper/
-examples/
-/*.py
-to_html/
-seq/
-tests/
-cytof/
+/*
+*__pycache__
+!.gitignore
+!LICENSE
+!README.md
+!requirements.txt
+!flowjo
+!tutorial
+
