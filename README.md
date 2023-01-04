@@ -1,15 +1,12 @@
 # FlowJo Tools
 
-A library with (handy) tools for the handling of FlowJo related data.  
-• The 'data' module allows for the loading and saving of CSV data.  
-• The 'wsp' module parses and exposes a FlowJo wsp file and allows for the annotation and export of gate annotated data.  
-• The 'plot' module provides FlowJo-like (and more) plotting functions for the data retreived by the data or wsp modules. Also provides an interface for dimensional reduction methods.  
-• The 'transform' module provides the common transformations for plotting.  
-• The 'matrix' module allows the manipulation (and import, export) of FlowJo mtx compensation matrices.
+A library with (handy) tools for the handling of FlowJo related data. FlowJo is extremely useful for the compensation and gating of flow cytometry based data. Nonetheless, it lacks an API and a way to export this gating annotated data for further manipulation, such as dimensional reduction, clustering, etc. This library provides the link between the sample data and gating annotations. This library reapplies the gating tree on the compensated data and delivers that in a convenient pandas.DataFrame. To further ease the use a plotting library with common flow cytometry related plots is provided.
 
-## Authors
-
-AJ Zwijnenburg
+The modules:  
+• The 'wsp' module parses and exposes a FlowJo .wsp file and allows for the annotation and export of gate annotated data.  
+• The 'plot' module provides FlowJo-like (and more) plotting functions for the data extracted from the FlowJo wsp file. Also provides an interface for dimensional reduction methods.  
+• The 'transform' module provides the common transformations for plotting, such as linear, log10, biexponential.  
+• The 'matrix' module provides a basic matrix type that allows for the manipulation of FlowJo .mtx compensation matrices.
 
 ## Requirements
 
@@ -33,7 +30,7 @@ For a full list of attributes and function see 'Usage' or the documentation insi
 This 'flowjo' module provides an interface with FlowJo's workspace (.wsp) files.  
 It extends FlowJo's capabilities and presents FlowJo's data as a Panda matrix.  
 In the workflow FlowJo still has to be used for compensation and gating.  
-  
+
 Workflow:  
 • Use FlowJo to setup the compensation and gating. Note: All parameters starting with a double underscore "__" are reserved by the module implementation.  
 • Export the fcs data in csv format:  
@@ -301,34 +298,38 @@ for single in files[1:]:
 combined.save("combined.mtx")
 ```
 
+## Authors
+
+AJ Zwijnenburg
+
 ## Known Issues
 
-Boolean OR and AND gates are not supported. They require a non-recursive approach to gate resolving.
+Boolean OR and AND gates are not supported. They require a deferred handling as all components have to be known first.
 
 ## Version Info
 
-v1.0 - Implemented the compensation matrix tools and flowjo data annotated gate export protocol  
-v1.1 - Implemented the basic plotting functionalities  
-v1.2 - Implemented scatter_3d and convenience saving functions  
-v1.3 - Implemented show_3d  
-v1.4 - Implemented FlowJo wsp parser  
-v1.5 - Implemented factorized gate membership export  
-v1.6 - Implemented PCA dimensional reduction  
-v1.7 - Implemented Correlation line graph  
-v1.8 - Implemented range gates  
-v1.9 - Implemented basic histogram graph  
-v1.10 - Bugfix: not all parameter names were correctly extracted / group gates now show properly  
-v1.11 - Scale ticks/labels now generator based, better error messages  
-v1.12 - GroupGates now properly implemented  
-v1.13 - Implemented proper histogram graph and (much) faster density raster plots  
-v1.14 - Improved implementation of transformations and rasterization  
-v1.15 - Implemented masking  
-v1.16 - Implemented flowjo gate and density overlays  
-v1.17 - Implemented statistics gate nodes  
-v1.18 - Implemented reverse hyperbolic sin & logicle transforms. Updated to pandas 1.3  
-v1.19 - Implemented contribution and improved correlation graphs  
+v1.21 - Docstring modified into Google style, clarified readme  
 v1.20 - Implemented heatmap and violin graphs  
-v1.21 - Docstring modified into Google style, clarified readme
+v1.19 - Implemented contribution and improved correlation graphs  
+v1.18 - Implemented reverse hyperbolic sin & logicle transforms. Updated to pandas 1.3  
+v1.17 - Implemented statistics gate nodes  
+v1.16 - Implemented flowjo gate and density overlays  
+v1.15 - Implemented masking  
+v1.14 - Improved implementation of transformations and rasterization  
+v1.13 - Implemented proper histogram graph and (much) faster density raster plots  
+v1.12 - GroupGates now properly implemented  
+v1.11 - Scale ticks/labels now generator based, better error messages  
+v1.10 - Bugfix: not all parameter names were correctly extracted / group gates now show properly  
+v1.9 - Implemented basic histogram graph  
+v1.8 - Implemented range gates  
+v1.7 - Implemented Correlation line graph  
+v1.6 - Implemented PCA dimensional reduction  
+v1.5 - Implemented factorized gate membership export  
+v1.4 - Implemented FlowJo wsp parser  
+v1.3 - Implemented show_3d  
+v1.2 - Implemented scatter_3d and convenience saving functions  
+v1.1 - Implemented the basic plotting functionalities  
+v1.0 - Implemented the compensation matrix tools and flowjo data annotated gate export protocol
 
 ## License
 
